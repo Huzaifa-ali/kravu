@@ -122,11 +122,11 @@ tailored materials and the "why you fit" reasoning.
 - `kravu run [stages...]` — run the pipeline (default: all of 1–5).
 - `kravu status` — pipeline stats + ranked shortlist.
 
-## 11. Open decisions (to confirm during planning)
+## 11. Resolved decisions
 
-- **License:** MIT (max adoption) vs AGPL-3.0 (protects against closed SaaS
-  clones). *Pending user decision.*
-- **Author metadata** for `pyproject.toml`. *Pending user input.*
+- **License:** MIT.
+- **Author:** Muhammad Huzaifa Ali <huzaifaali4013399@gmail.com>.
+- **Coding standards:** see `.kiro/steering/coding-standards.md` (binding).
 
 ## 12. Roadmap (post-v0.1)
 

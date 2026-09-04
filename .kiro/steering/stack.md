@@ -15,9 +15,11 @@
 
 ## Conventions
 
+Full coding standards live in `.kiro/steering/coding-standards.md` (binding).
+Highlights:
+
 - **Type hints everywhere.** `from __future__ import annotations` at the top.
-- **Docstrings** on modules and public functions — say what it does, how to use
-  it, and what it depends on.
+- **Docstrings** (Google style) on modules and public functions.
 - **No secrets in code.** All keys via environment / `.env`.
 - **Parameterized SQL only.** Never string-interpolate user/data values into SQL.
 - **Errors are explicit.** A stage that fails one job records the error on that
