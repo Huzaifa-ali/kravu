@@ -57,8 +57,11 @@ The design is grounded in study of the reference project and current practice:
 (stages 1–5). Stage 6 (agent-at-the-edge auto-apply) is a later phase.
 
 **Patterns:** Pipes-and-Filters (stages), Blackboard (the DB), Repository
-(storage access), Adapter/Strategy (LLM providers). See
-`.kiro/steering/architecture.md` for the binding rules.
+(storage access), Adapter/Strategy (LLM providers), Ports-and-Adapters
+(pragmatic hexagonal — business logic in stages, infrastructure behind injected
+ports). Component responsibilities, file-by-file layout, and where business logic
+lives are defined in `.kiro/steering/component-design.md` (binding). Binding
+architecture rules: `.kiro/steering/architecture.md`.
 
 ```
 CLI (Typer)
