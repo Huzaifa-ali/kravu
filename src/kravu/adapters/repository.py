@@ -9,8 +9,8 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timezone
 
-from kravu.models import Job
-from kravu.storage.engine import get_connection
+from kravu.domain.models import Job
+from kravu.adapters.db import get_connection
 
 # Columns that map 1:1 between the Job dataclass and the jobs table.
 _JOB_COLUMNS = (

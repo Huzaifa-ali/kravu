@@ -1,7 +1,7 @@
 """Core data models for kravu.
 
-These are plain, frozen-ish dataclasses that move between pipeline stages.
-Persistence lives in ``kravu.storage``; nothing here talks to the database.
+These are plain, frozen-ish dataclasses that move between services.
+Persistence lives in ``kravu.adapters``; nothing here talks to the database.
 """
 
 from __future__ import annotations

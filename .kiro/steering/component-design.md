@@ -1,119 +1,137 @@
 # kravu — Component Design
 
 This document defines **what each component is for, what each file contains, and
-where the business logic lives.** It is binding. It applies a *pragmatic* (loose)
-Clean / Hexagonal architecture — we inherit the principles (modular, testable,
-infra-independent core) without the dogmatic four-folder ceremony that makes
-Python projects a nightmare to maintain.
+where the business logic lives.** It is binding.
 
-## The one rule
+kravu follows the **standard layered layout from _Architecture Patterns with
+Python_ (Cosmic Python)** — `domain` / `services` / `adapters` / `entrypoints` —
+the recognized reference structure for a responsibility-organized Python app.
+We apply it pragmatically (no dogmatic ceremony), organized **by layer** because
+kravu is a single cohesive domain (the job pipeline), not a multi-feature backend.
 
-> **Business logic never depends on infrastructure.**
-> Stages (the core) know *what* to do. They reach the database and the LLM only
-> through injected interfaces (ports). Swapping SQLite→Postgres or
-> Gemini→OpenAI must not change a single line in a stage.
+## The one rule (dependency direction)
 
-Dependencies point **inward**: CLI → pipeline → stages → (ports) → adapters.
-Nothing in `stages/` or `models.py` imports `sqlite3`, `litellm`, `httpx`, or a
-provider name.
+> **Business logic never depends on infrastructure.** Dependencies point inward:
+> `entrypoints → services → domain`, with `adapters` implementing `domain` ports.
 
-## Layers (virtual — expressed as modules, not enforced folders)
+The rule is mechanical and testable — decide where code lives by what it imports:
 
-| Layer | Module(s) | Purpose | May import |
-|-------|-----------|---------|------------|
-| **Interface** (driving adapter) | `cli.py` | Turn user commands into calls; render results. | pipeline, config, Rich |
-| **Application** (orchestration) | `pipeline.py` | Run stages in dependency order, sequential. | stages, repository, config |
-| **Domain logic** (the core) | `stages/*.py` | **All business logic lives here.** | models, ports (protocols) |
-| **Domain models** | `models.py` | Pure data (`Profile`, `Job`, ...). No behavior with side effects. | stdlib only |
-| **Ports** (interfaces) | `ports.py` | Protocols the core depends on (`LLMClient`, `JobStore`, `DiscoverySource`). | typing, models |
-| **Infrastructure** (driven adapters) | `storage/`, `core/llm.py`, discovery/enrich fetchers | Concrete DB, LLM, HTTP, JobSpy. Implement ports. | anything external |
-| **Cross-cutting** | `config.py`, `core/prompts.py`, `exceptions.py` | Config, prompt templates, error types. | as needed |
+| If a file imports... | it belongs in... |
+|----------------------|------------------|
+| `typer`, `rich` (the CLI) | `entrypoints/` |
+| `sqlite3`, `litellm`, `httpx`, `jobspy` (external tools) | `adapters/` |
+| only `domain/` (models + ports) | `services/` |
+| nothing outside the standard library | `domain/` |
+
+## Layers
+
+| Layer | Package | Purpose | May import |
+|-------|---------|---------|------------|
+| **Entrypoints** (driving adapters) | `entrypoints/` | Turn user commands into calls; render output. No business logic. | services, config, Typer, Rich |
+| **Services** (use cases) | `services/` | **All business logic.** One unit = one business operation. Orchestrates ports. | domain |
+| **Domain** | `domain/` | Pure business objects + the port protocols. No side effects. | stdlib only |
+| **Adapters** (driven adapters) | `adapters/` | Concrete infrastructure: DB, LLM, HTTP, JobSpy. Implement domain ports. | anything external |
+| **Cross-cutting** | `config.py`, `exceptions.py` | Config (12-factor env), error types. | as needed |
 
 ## Where the business logic resides — explicitly
 
-**In the stages.** Each stage is a *service* that owns one business decision:
+**In `services/`.** Each service is a **use case** named as a business operation
+(a verb-noun), not a generic "stage":
 
-- `stages/discover.py` — how to turn a search into jobs; **dedupe rule**.
-- `stages/enrich.py` — how to extract a full description; fallback strategy.
-- `stages/score.py` — how to judge fit (prompt shape, score parsing, threshold).
-- `stages/tailor.py` — how to rewrite a resume for a role **without fabricating**.
-- `stages/cover.py` — whether a role needs a cover letter, and how to write it.
+- `services/discover.py` → `DiscoverJobs` — turn a search into jobs; **dedupe rule**.
+- `services/enrich.py` → `EnrichJob` — extract full description; fallback strategy.
+- `services/score.py` → `ScoreJob` — judge fit (prompt shape, parsing, threshold).
+- `services/tailor.py` → `TailorResume` — rewrite resume for a role, **no fabrication**.
+- `services/cover_letter.py` → `WriteCoverLetter` — whether a role needs a letter, and write it.
+- `services/pipeline.py` → the orchestrator: run the use cases in order. Sequencing
+  only — it holds no business rules itself.
 
-Business logic does NOT live in the CLI (that only parses/renders), in the
-pipeline (that only sequences), in models (pure data), or in adapters (dumb I/O).
+Business logic does NOT live in entrypoints (parse/render only), the pipeline
+(sequencing only), domain models (pure data), or adapters (dumb I/O).
+
+> We do not use the word "stage" in code. "Stage" is only an informal way to
+> describe the pipeline's flow in prose. The units are **use cases / services**.
 
 ## Ports & Adapters (dependency inversion)
 
-Stages depend on **protocols**, not concretions. Defined in `ports.py`:
+Services depend on **protocols** in `domain/ports.py`, never on concretions:
 
-- `JobStore` — the persistence port. Implemented by `storage.JobRepository`
+- `JobStore` — persistence port. Implemented by `adapters.repository.JobRepository`
   (SQLite). A future `PostgresJobRepository` implements the same port.
-- `LLMClient` — the model port (`complete(prompt) -> str`). Implemented by
-  `core.llm.LiteLLMClient`. Tests use a `FakeLLMClient`.
-- `DiscoverySource` — the job-source port. Implemented by a JobSpy adapter; a
-  future Apify adapter implements the same port.
+- `LLMClient` — model port (`complete(prompt) -> str`). Implemented by
+  `adapters.llm.LiteLLMClient`. Tests use a `FakeLLMClient`.
+- `DiscoverySource` — job-source port. Implemented by `adapters.jobspy_source`;
+  a future Apify adapter implements the same port.
 
-**Injection:** adapters are constructed at the edge (in `cli.py` / a small
-composition step) and passed into stages. Stages never construct their own
-adapters. This is what makes every stage unit-testable with fakes and keeps the
-core infra-free.
+**Injection:** adapters are constructed at the edge (in `entrypoints/cli.py`, or a
+small composition step) and passed into services. Services never construct their
+own adapters — this keeps the core infra-free and unit-testable with fakes.
 
-## What each file contains (v0.1 target layout)
+## File layout (v0.1 target)
 
 ```
 src/kravu/
-├── __init__.py          version
-├── cli.py               Typer app: init / run / status. Wires adapters, calls pipeline, renders.
-├── pipeline.py          Orchestrator: ordered stage execution, per-stage summary. No business rules.
-├── models.py            Dataclasses: Profile, Job, ScoreResult, Stage. Pure data.
-├── ports.py             Protocols: JobStore, LLMClient, DiscoverySource.
-├── exceptions.py        KravuError hierarchy.
-├── config.py            Paths, env loading, profile/searches loading, defaults.
-├── core/
-│   ├── llm.py           LiteLLMClient (implements LLMClient). Provider-agnostic.
-│   └── prompts.py       Prompt templates for score/tailor/cover. Low-slop, no fabrication.
-├── stages/
-│   ├── base.py          Stage protocol/ABC: name, run(store, ...). Shared helpers.
-│   ├── discover.py      DiscoverStage — uses DiscoverySource + JobStore.
-│   ├── enrich.py        EnrichStage — fetch + parse full description.
-│   ├── score.py         ScoreStage — LLMClient scores each job vs profile.
-│   ├── tailor.py        TailorStage — LLMClient rewrites resume; fabrication guard.
-│   └── cover.py         CoverStage — conditional cover letter.
-├── discovery/
-│   └── jobspy_source.py JobSpy adapter (implements DiscoverySource).
-└── storage/
-    ├── engine.py        SQLite connection/WAL.
-    ├── schema.py        jobs table (state machine).
-    └── repository.py    JobRepository (implements JobStore). All SQL here.
+├── __init__.py            version
+├── config.py              paths, env loading, profile/searches loading, defaults (12-factor)
+├── exceptions.py          KravuError hierarchy
+├── domain/
+│   ├── __init__.py
+│   ├── models.py          Profile, Job, ScoreResult, Stage enum. Pure data.
+│   └── ports.py           Protocols: JobStore, LLMClient, DiscoverySource.
+├── services/
+│   ├── __init__.py
+│   ├── pipeline.py        Orchestrator: ordered use-case execution. No business rules.
+│   ├── discover.py        DiscoverJobs
+│   ├── enrich.py          EnrichJob
+│   ├── score.py           ScoreJob
+│   ├── tailor.py          TailorResume
+│   └── cover_letter.py    WriteCoverLetter
+├── adapters/
+│   ├── __init__.py
+│   ├── db.py              SQLite engine + schema (connection, WAL).
+│   ├── repository.py      JobRepository  → implements JobStore. All SQL here.
+│   ├── llm.py             LiteLLMClient  → implements LLMClient. Provider-agnostic.
+│   ├── prompts.py         Prompt templates for score/tailor/cover. Low-slop, no fabrication.
+│   └── jobspy_source.py   JobSpy adapter → implements DiscoverySource.
+└── entrypoints/
+    ├── __init__.py
+    └── cli.py             Typer app: init / run / status. Wires adapters, calls pipeline, renders.
+
+tests/
+├── conftest.py            shared fixtures (temp DB, fakes)
+├── unit/                  domain + services with fakes — offline, deterministic
+├── integration/          adapters against a temp SQLite / mocked HTTP
+└── e2e/                   a full pipeline run end-to-end
 ```
 
 ## SRP checklist (applied to every file)
 
-For each file you must be able to answer in one sentence: *what is this
-responsible for?* If the answer needs "and", split it. Concretely:
-- A stage does business logic and orchestrates its ports — it does not open
-  DB connections, build LLM clients, or format CLI output.
+For each file you must answer in one sentence: *what is this responsible for?*
+If the answer needs "and", split it. Concretely:
+- A service does business logic and orchestrates its ports — it does not open DB
+  connections, build LLM clients, or format CLI output.
 - An adapter does I/O — it holds no business rules.
-- `models.py` holds data shapes — no DB, no network, no prompts.
+- `domain/models.py` holds data shapes — no DB, no network, no prompts.
 
 ## Data flow (one run)
 
 ```
-cli.run()
+entrypoints/cli.py :: run()
   → build adapters (JobRepository, LiteLLMClient, JobSpySource) + load Profile
-  → pipeline.run(stages, store, llm, source, profile, min_score)
-       for stage in [discover, enrich, score, tailor, cover]:
-           stage.run(...)                       # reads pending rows via JobStore,
-                                                 # applies business logic (maybe via LLMClient),
-                                                 # writes results back via JobStore
+  → services/pipeline.py :: run(use_cases, store, llm, source, profile, min_score)
+       for use_case in [DiscoverJobs, EnrichJob, ScoreJob, TailorResume, WriteCoverLetter]:
+           use_case.run(...)      # reads pending rows via JobStore,
+                                   # applies business logic (maybe via LLMClient),
+                                   # writes results back via JobStore
   → cli renders shortlist from store.shortlist(min_score)
 ```
 
-## Note on the existing draft
+## Migration note (from the earlier draft)
 
-`models.py`, `config.py`, `storage/*` already exist and conform. The additions
-this doc mandates for the plan: introduce `ports.py` (protocols) and
-`exceptions.py`, and ensure stages receive ports by injection rather than
-importing adapters directly. The current `storage/__init__.py` re-exports concrete
-classes — that's fine for the adapter package; stages still depend on the port.
+The earlier draft used `storage/`, `core/`, `stages/`. This is superseded by the
+standard layout above. The plan will relocate:
+`storage/*` → `adapters/{db,repository}.py`; `models.py` → `domain/models.py`;
+add `domain/ports.py`, `exceptions.py`; new units live in `services/`; CLI in
+`entrypoints/`. The underlying design (blackboard DB, repository, ports,
+determinism) is unchanged — only the packaging vocabulary is aligned to the standard.
 ```
