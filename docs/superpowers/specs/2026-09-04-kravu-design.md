@@ -118,6 +118,73 @@ paths to tailored materials and the "why you fit" reasoning.
 Both are use cases (business logic, testable with a fake LLM), kept out of the CLI,
 but they do **not** run during `kravu run`.
 
+## 7a. Use-case contracts
+
+Precise input/output for each pipeline use case. LLM calls return **strict JSON**
+(via LiteLLM's JSON/response-format support) so parsing is deterministic, not
+regex-scraped from prose. Each contract lists: input, output, DB writes, failure.
+
+### ExpandJob
+- **Input:** a `Job` with `url` (and preview `description`), no `full_description`.
+- **Behavior:** fetch the job page via httpx, then a 3-tier extraction cascade:
+  (1) JSON-LD (`JobPosting` structured data via trafilatura),
+  (2) targeted CSS selectors (selectolax) for known layouts,
+  (3) trafilatura main-content extraction as a general fallback.
+  Stop at the first tier that yields a non-trivial description (≥ a min length).
+- **Output / DB:** on success → `full_description`, `apply_url` (if found),
+  `enriched_at`. On failure (all tiers empty, HTTP error, timeout) → `enrich_error`
+  set, `enriched_at` set; the job is skipped by later use cases. **No LLM call**
+  in v0.1 (LLM-assisted extraction is a possible later enhancement, not default).
+- **Give-up rule:** one attempt; a recorded `enrich_error` is terminal for v0.1.
+
+### ScoreJobFit
+- **Input:** `Profile.compact_summary()` + the job's `full_description`.
+- **LLM output (strict JSON):** `{"score": <int 1-10>, "reasoning": <str>,
+  "missing_skills": [<str>, ...]}` → maps to `ScoreResult`.
+- **DB:** `fit_score` = score, `score_reasoning` = reasoning, `scored_at`.
+  (`missing_skills` folded into reasoning text for v0.1; not a separate column.)
+- **Threshold:** only jobs with `fit_score >= min_score` proceed to TailorResume.
+- **Robustness:** if the model returns an out-of-range or unparseable score, retry
+  once with a stricter instruction; on second failure record score `0` +
+  reasoning "unparseable" (the job simply won't clear the threshold). Never crash.
+
+### TailorResume  (fabrication-guarded — safety-critical)
+- **Input:** `Profile.resume_facts` (ground truth) + `full_description`.
+- **LLM output (strict JSON):** `{"tailored_resume": <str>,
+  "claims": [<str>, ...]}` — the rewrite, plus the list of concrete factual claims
+  (employers, titles, dates, metrics, skills) the rewrite asserts.
+- **Fabrication guard (two layers):**
+  1. **Prompt constraint:** the model is instructed it may reorder, re-emphasize,
+     and rephrase, but must use ONLY facts present in `resume_facts`; inventing
+     anything is forbidden.
+  2. **Post-generation verification:** kravu checks each returned `claim` is
+     grounded in `resume_facts`. v0.1 uses a deterministic check — key tokens of a
+     claim (company names, numbers/metrics, degree/title terms) must appear in
+     `resume_facts` (normalized). Any claim that isn't grounded ⇒ the tailoring is
+     **rejected**: bump `tailor_attempts`, retry once with the offending claim
+     called out; if it fails again, **do not write a tailored file** and leave the
+     job un-tailored (it still appears in the shortlist with the original resume).
+- **DB:** on success → `tailored_resume_path`, `tailored_at`. On repeated failure →
+  `tailor_attempts` incremented, no path written.
+- This makes "never fabricate" (principles.md) an *enforced mechanism*, not just a
+  prompt request.
+
+### DraftCoverLetter  (conditional)
+- **Input:** `Profile` + `full_description` (+ the tailored resume if present).
+- **Need decision (LLM, strict JSON):** `{"needed": <bool>, "reason": <str>,
+  "cover_letter": <str|null>}`. The model decides `needed` from signals in the JD
+  (explicit "cover letter required/optional", application form expectations); if
+  `needed` is false, `cover_letter` is null.
+- **DB:** `cover_needed` = needed; if needed → write file, set `cover_letter_path`;
+  always set `cover_at`. `bump cover_attempts` on failure (cap enforced by repo).
+- Same fabrication discipline as TailorResume applies to any factual claims.
+
+### Output format (v0.1)
+- Tailored resumes and cover letters are written as **Markdown** (`.md`) under
+  `~/.kravu/tailored/` and `~/.kravu/cover_letters/`, named by a slug of
+  company+title. **PDF rendering is v0.2** (per roadmap), so v0.1 output is
+  review-and-send Markdown/text the user can convert or paste.
+
 ## 8. Use case 6 — the Apply Agent (designed, deferred)
 
 Autonomous browser agent that fills and (optionally) submits an application form.

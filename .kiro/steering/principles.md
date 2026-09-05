@@ -18,6 +18,11 @@ non-negotiable and protect users, the project's reputation, and its usefulness.
   real resume facts. It must NEVER invent employers, titles, dates, degrees,
   metrics, or skills the user does not have.
 - `Profile.resume_facts` is the ground truth. Tailoring is constrained to it.
+- **Enforced, not just requested.** "Never fabricate" is a *mechanism*: LLM
+  rewrites must return the factual claims they assert, and kravu verifies each
+  claim is grounded in `resume_facts` before writing any tailored output. Ungrounded
+  claims ⇒ reject + retry; persistent failure ⇒ write nothing (leave the job
+  un-tailored) rather than emit fabricated material. See spec §7a (TailorResume).
 
 ## Respect platforms and privacy
 
