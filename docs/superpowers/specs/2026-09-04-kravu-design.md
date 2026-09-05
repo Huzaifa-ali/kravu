@@ -105,6 +105,12 @@ truth and `compact_summary()` for prompts), `Job`, `ScoreResult`, and the
 Output: `kravu status` shows a ranked shortlist — high-fit jobs, best first, with
 paths to tailored materials and the "why you fit" reasoning.
 
+**Setup-time use case (not part of the pipeline):**
+- **BuildProfile** (`services/build_profile.py`) — takes raw resume text + the
+  `LLMClient` and returns a structured `Profile` (keeping the raw text as
+  `resume_facts`). Used by `kravu init`. It's a use case (business logic, testable
+  with a fake LLM), kept out of the CLI, but it does not run during `kravu run`.
+
 ## 8. Use case 6 — the Apply Agent (designed, deferred)
 
 Autonomous browser agent that fills and (optionally) submits an application form.
@@ -131,11 +137,29 @@ later phase; not a v0.1 runtime dependency.** Design:
   approves before submit). Auto-submit is opt-in.
 - **Memory:** delegated to the driving agent. kravu builds no working-memory layer.
 
-## 9. LLM usage & memory
+## 9. LLM usage, providers & memory
 
-- LiteLLM; model via `KRAVU_MODEL` (default `gemini/gemini-2.0-flash`).
-- Each call is small, single-job, structured. No conversation history accumulates;
-  no external memory framework (Mem0/Letta/Zep). Durable memory is the DB.
+- **LiteLLM**; model chosen via `KRAVU_MODEL`. Each call is small, single-job,
+  structured. No conversation history accumulates; no external memory framework
+  (Mem0/Letta/Zep). Durable memory is the DB.
+- **kravu never handles API keys.** Keys are the user's responsibility, set in the
+  environment (or `~/.kravu/.env`) *before* using kravu — standard 12-factor. `init`
+  selects the *provider/model*; it never prompts for or stores a key.
+- **Provider/model options** (defaults current as of 2026-09-04; model strings move
+  frequently — all overridable via `KRAVU_MODEL`):
+
+| Provider (in `init`) | `KRAVU_MODEL` | Key (hard-stop if missing) | Note |
+|----------------------|---------------|----------------------------|------|
+| **Gemini — Gemma 4 31B (default)** | `gemini/gemma-4-31b` | `GEMINI_API_KEY` | ⚠️ hosted model string UNVERIFIED — confirm in Google AI Studio; override if it differs |
+| Ollama — Qwen (small) | `ollama/qwen3.5:4b` | none (local) | ~3.4GB, runs on modest hardware |
+| Ollama — Qwen (latest) | `ollama/qwen3.8:27b` | none (local) | ~18GB, needs a strong GPU |
+| Anthropic | `anthropic/claude-sonnet-5` | `ANTHROPIC_API_KEY` | |
+| OpenAI | `gpt-6-astra` | `OPENAI_API_KEY` | |
+
+- **Preflight (hard-stop):** when a key-requiring provider is selected, kravu checks
+  the matching env var. If absent, it stops with an actionable message naming the
+  exact variable to set — it does **not** prompt for the key. Local (Ollama)
+  providers need no key.
 
 ## 10. Technology stack & versions
 
@@ -209,12 +233,37 @@ build-backend = "hatchling.build"
   `conftest.py` (temp SQLite, fakes).
 - Use cases are tested with a fake `JobStore` and a fake `LLMClient`.
 
-## 13. CLI surface (v0.1)
+## 13. CLI surface & the `init` flow (v0.1)
 
-- `kravu init` — wizard: create `profile.json` (from a resume file),
-  `searches.yaml`, `.env`.
+**Prerequisite (user, before kravu):** set your provider API key in the
+environment or `~/.kravu/.env` (e.g. `GEMINI_API_KEY=...`). kravu never collects
+keys. Local Ollama providers need no key. `.env.example` documents this.
+
+**Commands:**
+- `kravu init` — one-time setup wizard (details below).
 - `kravu run [phases...]` — run the workflow (default: all use cases 1–5).
 - `kravu status` — pipeline stats + ranked shortlist.
+
+**`kravu init` flow:**
+
+1. **Resume:** ask for a path to the user's CV (PDF/DOCX/TXT); extract raw text.
+2. **Provider/model:** user picks from the table in §9 (default:
+   `gemini/gemma-4-31b`). Write the chosen string to config as `KRAVU_MODEL`.
+   **The key is never requested or stored.**
+3. **Preflight (hard-stop):** verify the matching key env var exists for the chosen
+   provider (skip for Ollama). If missing, print the exact variable to set and
+   **stop** — do not continue, do not prompt for the key.
+4. **Structure resume (`BuildProfile`):** one LLM call turns the raw resume text
+   into a structured `Profile`; keep the raw text as `resume_facts` (ground truth).
+5. **Review:** show the extracted `Profile`; user edits if needed; save
+   `~/.kravu/profile.json`.
+6. **Targets:** prompt for target roles/locations/filters; save
+   `~/.kravu/searches.yaml`.
+7. Done — instruct the user to run `kravu run`.
+
+`init` is **safe to re-run**: if files exist, it asks overwrite/edit/keep rather
+than clobbering. Business logic (resume structuring) lives in the `BuildProfile`
+use case, not in the CLI.
 
 ## 14. Resolved decisions
 
@@ -222,6 +271,10 @@ build-backend = "hatchling.build"
 - **Package/command name:** `kravu`.
 - **Unit terminology:** Use Case (option A), verb-noun class names.
 - **Pinning:** compatible-release ranges; `uv.lock` for exact reproducibility.
+- **API keys:** user-managed in the environment; kravu never collects/stores keys.
+  `init` selects provider/model only, with a hard-stop preflight if the key is absent.
+- **Default model:** `gemini/gemma-4-31b` (string unverified against the hosted API —
+  flagged in §9; overridable via `KRAVU_MODEL`).
 
 ## 15. Roadmap (post-v0.1)
 
@@ -233,5 +286,6 @@ build-backend = "hatchling.build"
 
 `domain/models.py`, `config.py`, `adapters/{db,repository}.py` exist and conform to
 this spec and the steering. The implementation plan will add `exceptions.py`,
-`domain/ports.py`, the `services/` use cases, adapters (`llm`, `prompts`,
-`jobspy_source`), and `entrypoints/cli.py`, wiring use cases to ports by injection.
+`domain/ports.py`, the `services/` use cases (incl. the setup-time `BuildProfile`),
+adapters (`llm`, `prompts`, `jobspy_source`), and `entrypoints/cli.py`, wiring use
+cases to ports by injection.

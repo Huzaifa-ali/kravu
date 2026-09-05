@@ -71,7 +71,7 @@ def load_env() -> None:
 
 
 DEFAULTS: dict[str, Any] = {
-    "model": "gemini/gemini-2.0-flash",
+    "model": "gemini/gemma-4-31b",
     "min_score": 7,
 }
 
