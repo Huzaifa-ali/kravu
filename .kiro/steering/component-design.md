@@ -56,8 +56,8 @@ describe pipeline flow. The units are **Use Cases**.
 **In `services/`.** Each unit is a **Use Case** named as a verb-noun business
 operation:
 
-- `services/source.py` → `SourceJobs` — find job postings across boards; **dedupe rule**.
-- `services/fetch.py` → `FetchJobDetails` — retrieve full description; fallback strategy.
+- `services/explore.py` → `ExploreJobs` — find job postings across boards; **dedupe rule**.
+- `services/expand.py` → `ExpandJob` — retrieve full description; fallback strategy.
 - `services/score.py` → `ScoreJobFit` — judge fit (prompt shape, parsing, threshold).
 - `services/tailor.py` → `TailorResume` — rewrite resume for a role, **no fabrication**.
 - `services/cover_letter.py` → `DraftCoverLetter` — whether a role needs a letter, and write it.
@@ -96,8 +96,8 @@ src/kravu/
 ├── services/
 │   ├── __init__.py
 │   ├── pipeline.py        Orchestrator (Pipeline): ordered use-case execution. No business rules.
-│   ├── source.py          SourceJobs
-│   ├── fetch.py           FetchJobDetails
+│   ├── explore.py         ExploreJobs
+│   ├── expand.py          ExpandJob
 │   ├── score.py           ScoreJobFit
 │   ├── tailor.py          TailorResume
 │   └── cover_letter.py    DraftCoverLetter
@@ -134,7 +134,7 @@ If the answer needs "and", split it. Concretely:
 entrypoints/cli.py :: run()
   → build adapters (JobRepository, LiteLLMClient, JobSpySource) + load Profile
   → services/pipeline.py :: run(use_cases, store, llm, source, profile, min_score)
-       for use_case in [SourceJobs, FetchJobDetails, ScoreJobFit, TailorResume, DraftCoverLetter]:
+       for use_case in [ExploreJobs, ExpandJob, ScoreJobFit, TailorResume, DraftCoverLetter]:
            use_case.run(...)      # reads pending rows via JobStore,
                                    # applies business logic (maybe via LLMClient),
                                    # writes results back via JobStore

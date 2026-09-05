@@ -19,15 +19,15 @@ class PipelinePhase(str, Enum):
     ``kravu.services``.
     """
 
-    SOURCE = "source"
-    FETCH = "fetch"
+    EXPLORE = "explore"
+    EXPAND = "expand"
     SCORE = "score"
     TAILOR = "tailor"
     COVER = "cover"
 
     @classmethod
     def order(cls) -> list["PipelinePhase"]:
-        return [cls.SOURCE, cls.FETCH, cls.SCORE, cls.TAILOR, cls.COVER]
+        return [cls.EXPLORE, cls.EXPAND, cls.SCORE, cls.TAILOR, cls.COVER]
 
 
 @dataclass(slots=True)
