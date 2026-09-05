@@ -26,7 +26,7 @@ We use recognized software-architecture terms, not casual labels:
   workflow-vs-agent distinction: a workflow runs predetermined steps; an agent
   directs its own process.
 - **Use Case** — one unit of business logic (Clean Architecture), named verb-noun:
-  `DiscoverJobs`, `EnrichJob`, `ScoreJob`, `TailorResume`, `WriteCoverLetter`.
+  `SourceJobs`, `FetchJobDetails`, `ScoreJobFit`, `TailorResume`, `DraftCoverLetter`.
 - **Pipeline (Orchestrator)** — sequences the use cases; holds no business rules.
 - **Apply Agent** — use case 6, a **Browser Agent** (autonomous, deferred phase).
 - **Agent Driver** — the swappable LLM/coding-agent that powers the Apply Agent
@@ -72,8 +72,8 @@ component responsibilities and file layout: `.kiro/steering/component-design.md`
 ```
 entrypoints/cli.py   (Typer)  →  services/pipeline.py (Orchestrator)
    builds adapters, loads Profile        runs use cases in order:
-                                          DiscoverJobs → EnrichJob → ScoreJob
-                                          → TailorResume → WriteCoverLetter
+                                          SourceJobs → FetchJobDetails → ScoreJobFit
+                                          → TailorResume → DraftCoverLetter
    each use case: read pending rows via JobStore → apply logic (maybe via
    LLMClient) → write results back  ──▶  SQLite jobs table (blackboard)
 ```
@@ -81,7 +81,7 @@ entrypoints/cli.py   (Typer)  →  services/pipeline.py (Orchestrator)
 ## 6. Data model
 
 Single `jobs` table as a state machine, keyed by `url` (natural dedupe key). A row
-is created by `DiscoverJobs` and advances as each use case fills its columns.
+is created by `SourceJobs` and advances as each use case fills its columns.
 Pending work for a use case = "input column set AND output column NULL". Columns
 grouped by use case: discovery, enrichment, scoring, tailoring, cover.
 
@@ -91,15 +91,15 @@ truth and `compact_summary()` for prompts), `Job`, `ScoreResult`, and the
 
 ## 7. The use cases (1–5, v0.1)
 
-1. **DiscoverJobs** — JobSpy across boards for the configured searches; insert new
+1. **SourceJobs** — JobSpy across boards for the configured searches; insert new
    jobs; dedupe by URL.
-2. **EnrichJob** — fetch each job's full description (httpx + parse; LLM fallback
-   for unknown layouts). Record per-job errors; never crash the run.
-3. **ScoreJob** — one focused LLM call per job: compact profile + this JD → fit
+2. **FetchJobDetails** — fetch each job's full description (httpx + parse; LLM
+   fallback for unknown layouts). Record per-job errors; never crash the run.
+3. **ScoreJobFit** — one focused LLM call per job: compact profile + this JD → fit
    1–10 + reasoning. Only jobs ≥ `min_score` proceed.
 4. **TailorResume** — one LLM call per high-fit job: rewrite the resume for the
    role. Constrained to `resume_facts`; never fabricates. Writes a tailored file.
-5. **WriteCoverLetter** — conditional: decide if the role needs a cover letter;
+5. **DraftCoverLetter** — conditional: decide if the role needs a cover letter;
    if so, write a targeted one; otherwise mark not-needed.
 
 Output: `kravu status` shows a ranked shortlist — high-fit jobs, best first, with
@@ -146,13 +146,13 @@ ranges (`>=x,<next-major`); `uv.lock` captures exact resolved versions.
 
 | Package | Version | Used by |
 |---------|---------|---------|
-| `python-jobspy` | 1.1.82 | DiscoverJobs |
-| `litellm` | 1.99.0 | ScoreJob / TailorResume / WriteCoverLetter |
+| `python-jobspy` | 1.1.82 | SourceJobs |
+| `litellm` | 1.99.0 | ScoreJobFit / TailorResume / DraftCoverLetter |
 | `typer` | 0.27.2 | entrypoints/cli |
 | `rich` | 15.0.0 | CLI output |
-| `httpx` | 0.28.1 | EnrichJob (fetch) |
-| `selectolax` | 0.4.11 | EnrichJob (HTML/CSS parse) |
-| `trafilatura` | 2.2.0 | EnrichJob (content/JSON-LD extraction) |
+| `httpx` | 0.28.1 | FetchJobDetails (fetch) |
+| `selectolax` | 0.4.11 | FetchJobDetails (HTML/CSS parse) |
+| `trafilatura` | 2.2.0 | FetchJobDetails (content/JSON-LD extraction) |
 | `pyyaml` | 6.0.3 | searches.yaml |
 | `python-dotenv` | 1.2.3 | .env loading |
 

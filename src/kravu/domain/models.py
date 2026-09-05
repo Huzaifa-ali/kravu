@@ -19,15 +19,15 @@ class PipelinePhase(str, Enum):
     ``kravu.services``.
     """
 
-    DISCOVER = "discover"
-    ENRICH = "enrich"
+    SOURCE = "source"
+    FETCH = "fetch"
     SCORE = "score"
     TAILOR = "tailor"
     COVER = "cover"
 
     @classmethod
     def order(cls) -> list["PipelinePhase"]:
-        return [cls.DISCOVER, cls.ENRICH, cls.SCORE, cls.TAILOR, cls.COVER]
+        return [cls.SOURCE, cls.FETCH, cls.SCORE, cls.TAILOR, cls.COVER]
 
 
 @dataclass(slots=True)
@@ -112,7 +112,7 @@ class Job:
 
 @dataclass(slots=True)
 class ScoreResult:
-    """Structured output of the ScoreJob use case for one job."""
+    """Structured output of the ScoreJobFit use case for one job."""
 
     score: int                       # 1-10
     reasoning: str

@@ -41,7 +41,7 @@ We use recognized software-architecture nouns, not casual coinages:
 |---------|---------------|-------|
 | The whole system | **Pipeline** | Pipes-and-Filters |
 | Steps 1–5 collectively | **the workflow** (deterministic) | Anthropic agent taxonomy: workflow vs agent |
-| One unit of business logic | **Use Case** (`ScoreJob`, `TailorResume`) | Clean Architecture |
+| One unit of business logic | **Use Case** (`ScoreJobFit`, `TailorResume`) | Clean Architecture |
 | The sequencer | **Pipeline / Orchestrator** | — |
 | Step 6 | **Apply Agent** (a Browser Agent) | agent taxonomy |
 | Swappable LLM for step 6 | **Agent Driver** (Strategy) | GoF Strategy |
@@ -56,11 +56,11 @@ describe pipeline flow. The units are **Use Cases**.
 **In `services/`.** Each unit is a **Use Case** named as a verb-noun business
 operation:
 
-- `services/discover.py` → `DiscoverJobs` — turn a search into jobs; **dedupe rule**.
-- `services/enrich.py` → `EnrichJob` — extract full description; fallback strategy.
-- `services/score.py` → `ScoreJob` — judge fit (prompt shape, parsing, threshold).
+- `services/source.py` → `SourceJobs` — find job postings across boards; **dedupe rule**.
+- `services/fetch.py` → `FetchJobDetails` — retrieve full description; fallback strategy.
+- `services/score.py` → `ScoreJobFit` — judge fit (prompt shape, parsing, threshold).
 - `services/tailor.py` → `TailorResume` — rewrite resume for a role, **no fabrication**.
-- `services/cover_letter.py` → `WriteCoverLetter` — whether a role needs a letter, and write it.
+- `services/cover_letter.py` → `DraftCoverLetter` — whether a role needs a letter, and write it.
 - `services/pipeline.py` → `Pipeline` — the orchestrator: run the use cases in
   order. Sequencing only — it holds no business rules itself.
 
@@ -95,12 +95,12 @@ src/kravu/
 │   └── ports.py           Protocols: JobStore, LLMClient, DiscoverySource.
 ├── services/
 │   ├── __init__.py
-│   ├── pipeline.py        Orchestrator: ordered use-case execution. No business rules.
-│   ├── discover.py        DiscoverJobs
-│   ├── enrich.py          EnrichJob
-│   ├── score.py           ScoreJob
+│   ├── pipeline.py        Orchestrator (Pipeline): ordered use-case execution. No business rules.
+│   ├── source.py          SourceJobs
+│   ├── fetch.py           FetchJobDetails
+│   ├── score.py           ScoreJobFit
 │   ├── tailor.py          TailorResume
-│   └── cover_letter.py    WriteCoverLetter
+│   └── cover_letter.py    DraftCoverLetter
 ├── adapters/
 │   ├── __init__.py
 │   ├── db.py              SQLite engine + schema (connection, WAL).
@@ -134,7 +134,7 @@ If the answer needs "and", split it. Concretely:
 entrypoints/cli.py :: run()
   → build adapters (JobRepository, LiteLLMClient, JobSpySource) + load Profile
   → services/pipeline.py :: run(use_cases, store, llm, source, profile, min_score)
-       for use_case in [DiscoverJobs, EnrichJob, ScoreJob, TailorResume, WriteCoverLetter]:
+       for use_case in [SourceJobs, FetchJobDetails, ScoreJobFit, TailorResume, DraftCoverLetter]:
            use_case.run(...)      # reads pending rows via JobStore,
                                    # applies business logic (maybe via LLMClient),
                                    # writes results back via JobStore
