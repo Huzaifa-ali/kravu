@@ -105,11 +105,18 @@ truth and `compact_summary()` for prompts), `Job`, `ScoreResult`, and the
 Output: `kravu status` shows a ranked shortlist — high-fit jobs, best first, with
 paths to tailored materials and the "why you fit" reasoning.
 
-**Setup-time use case (not part of the pipeline):**
+**Setup-time use cases (not part of the pipeline):**
 - **BuildProfile** (`services/build_profile.py`) — takes raw resume text + the
   `LLMClient` and returns a structured `Profile` (keeping the raw text as
-  `resume_facts`). Used by `kravu init`. It's a use case (business logic, testable
-  with a fake LLM), kept out of the CLI, but it does not run during `kravu run`.
+  `resume_facts`). Used by `kravu init`.
+- **SuggestSearches** (`services/suggest_searches.py`) — takes the `Profile` + the
+  `LLMClient` and proposes a `searches.yaml` (inferred target roles/seniority, and
+  a conservative location). Output is validated against the searches schema (§13a)
+  before saving; invalid proposals are defaulted/corrected, never written broken.
+  Used by `kravu init`.
+
+Both are use cases (business logic, testable with a fake LLM), kept out of the CLI,
+but they do **not** run during `kravu run`.
 
 ## 8. Use case 6 — the Apply Agent (designed, deferred)
 
@@ -136,6 +143,10 @@ later phase; not a v0.1 runtime dependency.** Design:
 - **Safety:** **human-approval gate is the default** (prepare + queue; user
   approves before submit). Auto-submit is opt-in.
 - **Memory:** delegated to the driving agent. kravu builds no working-memory layer.
+- **Open item — apply-site targeting:** *which* sites/ATSes the Apply Agent submits
+  to (e.g. Workday portals, direct career pages, greenhouse/lever), how to classify
+  manual-only ATSes, and which to block, is an open design question to be settled
+  when this phase is built. This is distinct from discovery `sites` (§13a).
 
 ## 9. LLM usage, providers & memory
 
@@ -255,15 +266,69 @@ keys. Local Ollama providers need no key. `.env.example` documents this.
    **stop** — do not continue, do not prompt for the key.
 4. **Structure resume (`BuildProfile`):** one LLM call turns the raw resume text
    into a structured `Profile`; keep the raw text as `resume_facts` (ground truth).
-5. **Review:** show the extracted `Profile`; user edits if needed; save
-   `~/.kravu/profile.json`.
-6. **Targets:** prompt for target roles/locations/filters; save
+5. **Suggest searches (`SuggestSearches`):** from the `Profile`, one LLM call
+   proposes a `searches.yaml` (inferred target roles/seniority; conservative
+   location). Validate against the schema (§13a) before proposing.
+6. **Review both:** show the extracted `Profile` **and** the proposed searches;
+   user chooses **keep** or **edit**; save `~/.kravu/profile.json` and
    `~/.kravu/searches.yaml`.
 7. Done — instruct the user to run `kravu run`.
 
 `init` is **safe to re-run**: if files exist, it asks overwrite/edit/keep rather
-than clobbering. Business logic (resume structuring) lives in the `BuildProfile`
-use case, not in the CLI.
+than clobbering. Setup uses two LLM calls (BuildProfile + SuggestSearches).
+Business logic lives in those use cases, not in the CLI.
+
+Note: because search targets are *inferred from a resume*, they can be wrong (e.g.
+a user pivoting careers). Location especially is weak from a CV — `SuggestSearches`
+proposes it conservatively (resume location or "Remote") and the review step (6)
+must make it easy to correct.
+
+## 13a. `searches.yaml` schema
+
+One or more named searches. `ExploreJobs` runs each and dedupes results by URL.
+Fields map directly onto JobSpy's `scrape_jobs()`; the YAML key `sites` maps to
+JobSpy's `site_name`.
+
+```yaml
+# ~/.kravu/searches.yaml
+defaults:                      # merged into every search unless overridden
+  sites: [indeed, linkedin, zip_recruiter, google]
+  results_wanted: 25
+  hours_old: 168               # last 7 days
+  description_format: markdown
+
+searches:
+  - name: devops-us            # kravu label (status/logs); not sent to JobSpy
+    search_term: "DevOps engineer"
+    location: "United States"
+    country_indeed: USA        # REQUIRED when 'indeed' or 'glassdoor' is in sites
+    is_remote: true
+    # job_type: fulltime       # fulltime | parttime | contract | internship
+    # distance: 50             # miles
+    # google_search_term: "..."# recommended when 'google' is a site
+```
+
+**Field mapping / notes:**
+- `sites` → JobSpy `site_name`. Allowed: indeed, linkedin, zip_recruiter, google,
+  glassdoor, bayt, bdjobs, naukri.
+- Passed through to JobSpy: `search_term`, `location`, `results_wanted`,
+  `hours_old`, `job_type`, `is_remote`, `distance`, `google_search_term`,
+  `country_indeed`, `description_format`.
+- `name` is kravu-only.
+
+**Validation (hard-error at load; consistent with the hard-stop philosophy):**
+- If `indeed` or `glassdoor` is in `sites`, `country_indeed` is **required**.
+- **Indeed** allows only ONE of: `hours_old` / (`job_type` + `is_remote`) /
+  `easy_apply`. Conflicts are a hard error.
+- **LinkedIn** allows only ONE of: `hours_old` / `easy_apply`.
+- If `google` is a site and `google_search_term` is absent, kravu derives one from
+  `search_term` + `location`.
+- Safe defaults keep first runs small/fast (`results_wanted: 25`, `hours_old: 168`) —
+  never a mass blast (co-pilot principle).
+
+> **Deferred / open:** the `sites` here are *discovery* sources (where jobs are
+> found). *Which sites kravu submits applications to* is a separate concern of the
+> Apply Agent (use case 6) and is an open item — see §8. The two are not conflated.
 
 ## 14. Resolved decisions
 
@@ -286,6 +351,6 @@ use case, not in the CLI.
 
 `domain/models.py`, `config.py`, `adapters/{db,repository}.py` exist and conform to
 this spec and the steering. The implementation plan will add `exceptions.py`,
-`domain/ports.py`, the `services/` use cases (incl. the setup-time `BuildProfile`),
-adapters (`llm`, `prompts`, `jobspy_source`), and `entrypoints/cli.py`, wiring use
-cases to ports by injection.
+`domain/ports.py`, the `services/` use cases (incl. setup-time `BuildProfile` and
+`SuggestSearches`), adapters (`llm`, `prompts`, `jobspy_source`), and
+`entrypoints/cli.py`, wiring use cases to ports by injection.
