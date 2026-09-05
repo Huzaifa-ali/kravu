@@ -14,7 +14,7 @@ from kravu.adapters.db import get_connection
 
 # Columns that map 1:1 between the Job dataclass and the jobs table.
 _JOB_COLUMNS = (
-    "url", "title", "company", "location", "salary", "source",
+    "url", "title", "company", "location", "salary", "source", "apply_type",
     "description", "discovered_at",
     "full_description", "apply_url", "enriched_at", "enrich_error",
     "fit_score", "score_reasoning", "scored_at",
@@ -50,12 +50,13 @@ class JobRepository:
             self._conn.execute(
                 """
                 INSERT INTO jobs (url, title, company, location, salary, source,
-                                  description, discovered_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                  apply_type, description, discovered_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job.url, job.title, job.company, job.location, job.salary,
-                    job.source, job.description, job.discovered_at or _now(),
+                    job.source, job.apply_type, job.description,
+                    job.discovered_at or _now(),
                 ),
             )
             self._conn.commit()

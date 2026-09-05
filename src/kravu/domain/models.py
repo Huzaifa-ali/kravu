@@ -86,6 +86,7 @@ class Job:
     location: str = ""
     salary: str = ""
     source: str = ""                 # which board it came from
+    apply_type: str = ""             # easy-apply | external | ats (for the Apply Agent)
     description: str = ""            # short/preview description from discovery
     discovered_at: str | None = None
 

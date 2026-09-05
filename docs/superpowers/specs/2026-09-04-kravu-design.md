@@ -91,8 +91,9 @@ truth and `compact_summary()` for prompts), `Job`, `ScoreResult`, and the
 
 ## 7. The use cases (1–5, v0.1)
 
-1. **ExploreJobs** — JobSpy across boards for the configured searches; insert new
-   jobs; dedupe by URL.
+1. **ExploreJobs** — discovery via configurable sources (JobSpy keyword search by
+   default; ATS company boards opt-in). Merge, dedupe by normalized URL, persist
+   new jobs. See §7a for the full contract.
 2. **ExpandJob** — fetch each job's full description (httpx + parse; LLM
    fallback for unknown layouts). Record per-job errors; never crash the run.
 3. **ScoreJobFit** — one focused LLM call per job: compact profile + this JD → fit
@@ -110,10 +111,11 @@ paths to tailored materials and the "why you fit" reasoning.
   `LLMClient` and returns a structured `Profile` (keeping the raw text as
   `resume_facts`). Used by `kravu init`.
 - **SuggestSearches** (`services/suggest_searches.py`) — takes the `Profile` + the
-  `LLMClient` and proposes a `searches.yaml` (inferred target roles/seniority, and
-  a conservative location). Output is validated against the searches schema (§13a)
-  before saving; invalid proposals are defaulted/corrected, never written broken.
-  Used by `kravu init`.
+  `LLMClient` and proposes a `searches.yaml`: keyword searches (inferred target
+  roles/seniority + a conservative location) and, **if the user enables ATS**, a
+  proposed target-company list. Output is validated against the searches schema
+  (§13a) before saving; invalid proposals (incl. bad ATS slugs) are
+  defaulted/dropped, never written broken. Used by `kravu init`.
 
 Both are use cases (business logic, testable with a fake LLM), kept out of the CLI,
 but they do **not** run during `kravu run`.
@@ -124,7 +126,36 @@ Precise input/output for each pipeline use case. LLM calls return **strict JSON*
 (via LiteLLM's JSON/response-format support) so parsing is deterministic, not
 regex-scraped from prose. Each contract lists: input, output, DB writes, failure.
 
-### ExpandJob
+### ExploreJobs
+- **Input:** the `sources` config + `searches` (from `searches.yaml`).
+- **Sources (via the `DiscoverySource` port, independently configurable):**
+  - **JobSpy (default, enabled):** keyword-driven. Runs each entry in `searches`
+    (search_term + location + filters) across the configured `sites`.
+  - **ATS (opt-in, disabled by default):** company-driven. Pulls each configured
+    company's board via the ATS JSON API (Greenhouse, Lever, Ashby). Company slugs
+    may be LLM-proposed by `SuggestSearches` (from keywords + resume) and reviewed;
+    each slug is **validated against the ATS API** and silently dropped if invalid.
+    (kravu never requires the user to know company names — keywords remain the
+    primary input; ATS companies are derived/optional.)
+- **Behavior / "do better than ApplyPilot":**
+  1. **Structured location** — persist JobSpy's structured location + `is_remote`
+     as real fields; location filtering is precise, not substring guessing.
+  2. **Description-quality gate** — promote a returned description to
+     `full_description` only if it passes a real-description check (sufficient
+     length **and** section signals like responsibilities/requirements), not a flat
+     length threshold. Otherwise store it as the preview `description` only.
+  3. **Normalized-URL dedupe** — dedupe key = URL with tracking query/fragment
+     stripped and host lowercased, catching duplicates raw-URL PKs miss.
+  4. **Per-source outcome recording** — record why a source returned nothing
+     (blocked/429/empty) so `status` can report it, not silent zeros.
+  5. **Non-aborting failures** — a failing source/site is recorded; the run
+     continues with the others. Per-source retry with backoff on transient/429.
+- **Persisted fields:** url, title, company, location (structured), is_remote,
+  salary, source/site, preview `description`, promoted `full_description` (gated),
+  `apply_url`, `apply_type` (easy-apply | external | ats), discovered_at.
+- **Failure:** no jobs found is a valid (empty) outcome, reported clearly.
+
+
 - **Input:** a `Job` with `url` (and preview `description`), no `full_description`.
 - **Behavior:** fetch the job page via httpx, then a 3-tier extraction cascade:
   (1) JSON-LD (`JobPosting` structured data via trafilatura),
@@ -358,13 +389,23 @@ JobSpy's `site_name`.
 
 ```yaml
 # ~/.kravu/searches.yaml
-defaults:                      # merged into every search unless overridden
-  sites: [indeed, linkedin, zip_recruiter, google]
+
+sources:                       # which discovery sources are active
+  jobspy:                      # DEFAULT — enabled, keyword-driven
+    enabled: true
+    sites: [indeed, linkedin, zip_recruiter, google]
+  ats:                         # OPT-IN — disabled by default, company-driven
+    enabled: false
+    companies:                 # only used if enabled; may be LLM-proposed in init
+      - { ats: greenhouse, slug: stripe }
+      - { ats: lever,      slug: netflix }
+
+defaults:                      # merged into every JobSpy search unless overridden
   results_wanted: 25
   hours_old: 168               # last 7 days
   description_format: markdown
 
-searches:
+searches:                      # keywords — the PRIMARY user input (drives JobSpy)
   - name: devops-us            # kravu label (status/logs); not sent to JobSpy
     search_term: "DevOps engineer"
     location: "United States"
@@ -376,9 +417,12 @@ searches:
 ```
 
 **Field mapping / notes:**
-- `sites` → JobSpy `site_name`. Allowed: indeed, linkedin, zip_recruiter, google,
-  glassdoor, bayt, bdjobs, naukri.
-- Passed through to JobSpy: `search_term`, `location`, `results_wanted`,
+- `sources.jobspy.sites` → JobSpy `site_name`. Allowed: indeed, linkedin,
+  zip_recruiter, google, glassdoor, bayt, bdjobs, naukri.
+- `sources.ats` is opt-in; each `{ats, slug}` is validated against the ATS API and
+  dropped if invalid. Users never need to know company names — keywords stay
+  primary; ATS companies are optional and may be proposed by `SuggestSearches`.
+- Per-JobSpy-search passthrough: `search_term`, `location`, `results_wanted`,
   `hours_old`, `job_type`, `is_remote`, `distance`, `google_search_term`,
   `country_indeed`, `description_format`.
 - `name` is kravu-only.
@@ -390,12 +434,13 @@ searches:
 - **LinkedIn** allows only ONE of: `hours_old` / `easy_apply`.
 - If `google` is a site and `google_search_term` is absent, kravu derives one from
   `search_term` + `location`.
+- At least one source must be enabled.
 - Safe defaults keep first runs small/fast (`results_wanted: 25`, `hours_old: 168`) —
   never a mass blast (co-pilot principle).
 
-> **Deferred / open:** the `sites` here are *discovery* sources (where jobs are
-> found). *Which sites kravu submits applications to* is a separate concern of the
-> Apply Agent (use case 6) and is an open item — see §8. The two are not conflated.
+> **Note:** `sources`/`sites` here are *discovery* sources (where jobs are found).
+> *Which sites the Apply Agent submits to* is a separate concern (use case 6, §8);
+> the two are not conflated.
 
 ## 14. Resolved decisions
 

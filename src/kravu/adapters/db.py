@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     location              TEXT,
     salary                TEXT,
     source                TEXT,
+    apply_type            TEXT,
     description           TEXT,
     discovered_at         TEXT,
 
