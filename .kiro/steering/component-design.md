@@ -33,24 +33,39 @@ The rule is mechanical and testable — decide where code lives by what it impor
 | **Adapters** (driven adapters) | `adapters/` | Concrete infrastructure: DB, LLM, HTTP, JobSpy. Implement domain ports. | anything external |
 | **Cross-cutting** | `config.py`, `exceptions.py` | Config (12-factor env), error types. | as needed |
 
+## Standard terminology (binding — used in code and docs)
+
+We use recognized software-architecture nouns, not casual coinages:
+
+| Concept | Standard term | Basis |
+|---------|---------------|-------|
+| The whole system | **Pipeline** | Pipes-and-Filters |
+| Steps 1–5 collectively | **the workflow** (deterministic) | Anthropic agent taxonomy: workflow vs agent |
+| One unit of business logic | **Use Case** (`ScoreJob`, `TailorResume`) | Clean Architecture |
+| The sequencer | **Pipeline / Orchestrator** | — |
+| Step 6 | **Apply Agent** (a Browser Agent) | agent taxonomy |
+| Swappable LLM for step 6 | **Agent Driver** (Strategy) | GoF Strategy |
+| Persistence contract | **Repository** (`JobStore` port) | Fowler PoEAA |
+| LLM/DB/HTTP concretions | **Adapters** | Ports & Adapters |
+
+We do NOT use the word "stage" in code. It may appear only informally in prose to
+describe pipeline flow. The units are **Use Cases**.
+
 ## Where the business logic resides — explicitly
 
-**In `services/`.** Each service is a **use case** named as a business operation
-(a verb-noun), not a generic "stage":
+**In `services/`.** Each unit is a **Use Case** named as a verb-noun business
+operation:
 
 - `services/discover.py` → `DiscoverJobs` — turn a search into jobs; **dedupe rule**.
 - `services/enrich.py` → `EnrichJob` — extract full description; fallback strategy.
 - `services/score.py` → `ScoreJob` — judge fit (prompt shape, parsing, threshold).
 - `services/tailor.py` → `TailorResume` — rewrite resume for a role, **no fabrication**.
 - `services/cover_letter.py` → `WriteCoverLetter` — whether a role needs a letter, and write it.
-- `services/pipeline.py` → the orchestrator: run the use cases in order. Sequencing
-  only — it holds no business rules itself.
+- `services/pipeline.py` → `Pipeline` — the orchestrator: run the use cases in
+  order. Sequencing only — it holds no business rules itself.
 
 Business logic does NOT live in entrypoints (parse/render only), the pipeline
 (sequencing only), domain models (pure data), or adapters (dumb I/O).
-
-> We do not use the word "stage" in code. "Stage" is only an informal way to
-> describe the pipeline's flow in prose. The units are **use cases / services**.
 
 ## Ports & Adapters (dependency inversion)
 

@@ -1,7 +1,7 @@
 """JobRepository: the only place that runs SQL against the jobs table.
 
-Stages depend on this interface, not on SQLite. Swapping to Postgres later means
-writing another implementation with the same methods — no stage code changes.
+Use cases depend on this interface, not on SQLite. Swapping to Postgres later means
+writing another implementation with the same methods — no use-case code changes.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ def _row_to_job(row: sqlite3.Row) -> Job:
 
 
 class JobRepository:
-    """CRUD + stage queries for jobs. Construct once per thread."""
+    """CRUD + per-use-case queries for jobs. Construct once per thread."""
 
     def __init__(self, conn: sqlite3.Connection | None = None) -> None:
         self._conn = conn or get_connection()

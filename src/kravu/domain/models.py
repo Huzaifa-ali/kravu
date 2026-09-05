@@ -11,8 +11,13 @@ from enum import Enum
 from typing import Any
 
 
-class Stage(str, Enum):
-    """The pipeline stages, in dependency order."""
+class PipelinePhase(str, Enum):
+    """The pipeline's use cases, in dependency order.
+
+    Named phases identify each use case for orchestration and reporting. The word
+    "stage" is deliberately avoided; these correspond to the Use Case classes in
+    ``kravu.services``.
+    """
 
     DISCOVER = "discover"
     ENRICH = "enrich"
@@ -21,7 +26,7 @@ class Stage(str, Enum):
     COVER = "cover"
 
     @classmethod
-    def order(cls) -> list["Stage"]:
+    def order(cls) -> list["PipelinePhase"]:
         return [cls.DISCOVER, cls.ENRICH, cls.SCORE, cls.TAILOR, cls.COVER]
 
 
@@ -29,9 +34,9 @@ class Stage(str, Enum):
 class Profile:
     """The user's structured profile, parsed from their CV + preferences.
 
-    ``resume_facts`` is the ground truth that the tailoring stage must preserve
-    verbatim — companies, titles, dates, metrics. The LLM may reorganize and
-    re-emphasize, but must never invent anything not present here.
+    ``resume_facts`` is the ground truth that the ``TailorResume`` use case must
+    preserve verbatim — companies, titles, dates, metrics. The LLM may reorganize
+    and re-emphasize, but must never invent anything not present here.
     """
 
     name: str = ""
@@ -71,7 +76,7 @@ class Job:
 
     Fields are filled in progressively: discovery sets the basics, enrichment
     adds the full description, scoring adds the fit score, and so on. ``None``
-    means "this stage hasn't run yet for this job".
+    means "this use case hasn't run yet for this job".
     """
 
     # Discovery
@@ -107,7 +112,7 @@ class Job:
 
 @dataclass(slots=True)
 class ScoreResult:
-    """Structured output of the scoring stage for one job."""
+    """Structured output of the ScoreJob use case for one job."""
 
     score: int                       # 1-10
     reasoning: str
