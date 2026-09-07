@@ -42,6 +42,25 @@ Output: a ranked shortlist + tailored materials you review and send yourself.
 - **Honest.** Never fabricates resume facts. Never mass-submits. Never harvests
   private contact data.
 
+## Run
+
+```bash
+uv sync --extra dev                      # install dependencies
+uv run python -m playwright install chromium   # one-time browser download
+                                         #   (used by enrich + the Apply Agent)
+```
+
+Set your provider key in the environment or `~/.kravu/.env` (e.g. `GEMINI_API_KEY=...`)
+— kravu never stores keys. Then:
+
+```bash
+uv run kravu init      # extract your resume, pick a model, propose searches
+uv run kravu run       # discover → enrich → score → tailor → cover
+uv run kravu status    # per-step counts + your ranked shortlist
+uv run kravu resume <step>   # retry a step (explore|expand|score|tailor|cover), then continue
+uv run kravu apply     # the gated Apply Agent — human-approval by default (opt-in auto)
+```
+
 ## Status
 
 🚧 Early development. v0.1 (discover → tailor → shortlist) in progress.
