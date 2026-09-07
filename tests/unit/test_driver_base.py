@@ -23,6 +23,12 @@ def test_parse_missing_line_is_failed() -> None:
     assert parse_result_line("garbage output").status == "failed"
 
 
+def test_parse_uses_last_result_line() -> None:
+    # Reverse scan: the agent's final RESULT line wins over earlier ones.
+    output = "progress...\nRESULT:FAILED:old\nmore\nRESULT:APPLIED"
+    assert parse_result_line(output) == DriverResult("applied", None)
+
+
 def test_protocol_is_runtime_checkable() -> None:
     class Fake:
         name = "fake"
