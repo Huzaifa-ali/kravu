@@ -10,14 +10,8 @@ your time — so you spend your effort applying, not searching.
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![Lint: Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-![Tests: 85 passing](https://img.shields.io/badge/tests-85%20passing-brightgreen.svg)
+[![CI](https://github.com/Huzaifa-ali/kravu/actions/workflows/ci.yml/badge.svg)](https://github.com/Huzaifa-ali/kravu/actions/workflows/ci.yml)
 ![Status: v0.1 dev](https://img.shields.io/badge/status-v0.1%20dev-orange.svg)
-
-<!--
-  After pushing to GitHub, replace the static "Tests" badge above with the live
-  CI status badge below (swap OWNER/REPO for your slug), and delete this comment:
-  [![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
--->
 
 </div>
 
