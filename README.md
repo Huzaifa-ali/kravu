@@ -13,6 +13,12 @@ your time — so you spend your effort applying, not searching.
 ![Tests: 85 passing](https://img.shields.io/badge/tests-85%20passing-brightgreen.svg)
 ![Status: v0.1 dev](https://img.shields.io/badge/status-v0.1%20dev-orange.svg)
 
+<!--
+  After pushing to GitHub, replace the static "Tests" badge above with the live
+  CI status badge below (swap OWNER/REPO for your slug), and delete this comment:
+  [![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
+-->
+
 </div>
 
 > kravu is a **co-pilot, not a spam-bot.** It prepares tailored materials and a
@@ -131,9 +137,10 @@ uv run pytest                                # tests (offline, no real LLM/netwo
 ```
 
 The codebase follows a `domain` / `services` / `adapters` / `entrypoints` layout
-(business logic in `services/`, infrastructure behind ports). Contributions should
-keep the full gate green. See [`docs/`](docs/) for the design spec and
-implementation plan.
+(business logic in `services/`, infrastructure behind ports). This same gate runs
+in CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) on every push and
+pull request across Python 3.11 and 3.12; contributions should keep it green. See
+[`docs/`](docs/) for the design spec and implementation plan.
 
 ## Roadmap
 
