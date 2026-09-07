@@ -118,4 +118,5 @@ class ScoreResult:
 
     score: int                       # 1-10
     reasoning: str
+    matched_keywords: list[str] = field(default_factory=list)
     missing_skills: list[str] = field(default_factory=list)

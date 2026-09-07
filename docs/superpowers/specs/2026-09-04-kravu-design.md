@@ -97,8 +97,9 @@ truth and `compact_summary()` for prompts), `Job`, `ScoreResult`, and the
 2. **ExpandJob** — Playwright renders each un-expanded job page, then extract the
    full description via JSON-LD → CSS → LLM (last resort). 3 attempts, then mark
    pending (non-fatal). See §7a.
-3. **ScoreJobFit** — one focused LLM call per job: compact profile + this JD → fit
-   1–10 + reasoning. Only jobs ≥ `min_score` proceed.
+3. **ScoreJobFit** — one focused LLM call per job (temp 0, rubric): full resume +
+   this JD + targets → fit 1–10 + matched/missing keywords + reasoning. Only jobs
+   ≥ `min_score` proceed. See §7a.
 4. **TailorResume** — one LLM call per high-fit job: rewrite the resume for the
    role. Constrained to `resume_facts`; never fabricates. Writes a tailored file.
 5. **DraftCoverLetter** — conditional: decide if the role needs a cover letter;
@@ -179,16 +180,30 @@ regex-scraped from prose. Each contract lists: input, output, DB writes, failure
   `enriched_at`. On 3× failure → `enrich_attempts` = 3, `enrich_error` set, pending.
 - **Dependency note:** Playwright + a browser are v0.1 runtime deps (also required
   by the Apply Agent, §8).
+
 ### ScoreJobFit
-- **Input:** `Profile.compact_summary()` + the job's `full_description`.
-- **LLM output (strict JSON):** `{"score": <int 1-10>, "reasoning": <str>,
-  "missing_skills": [<str>, ...]}` → maps to `ScoreResult`.
-- **DB:** `fit_score` = score, `score_reasoning` = reasoning, `scored_at`.
-  (`missing_skills` folded into reasoning text for v0.1; not a separate column.)
+- **Input:** full `resume_facts` (ground truth, not a lossy summary) + the job's
+  `full_description` (capped ~6000 chars) + the user's targets/preferences from
+  `searches` (makes scoring **target-aware** — a lightweight two-way fit).
+- **LLM call:** strict JSON, **temperature 0**, with an explicit **rubric** in the
+  prompt anchoring the scale (9-10 strong / 7-8 good / 5-6 moderate / 3-4 weak /
+  1-2 poor).
+- **LLM output (strict JSON):** `{"score": <int 1-10>, "matched_keywords":
+  [<str>...], "missing_skills": [<str>...], "reasoning": <2-3 sentences>}`.
+- **No hard filters inside scoring:** categorical location/remote filtering stays in
+  ExploreJobs. Research (2026 ATS/matching literature) shows aggressive keyword
+  hard-filters wrongly reject good fits, so scoring judges fit holistically.
+- **No fallback:** a model is always required (hard-stop preflight); there is no
+  offline/no-model scoring path.
+- **DB:** `fit_score` = score; `score_reasoning` = matched_keywords + missing_skills
+  + reasoning; `scored_at`.
 - **Threshold:** only jobs with `fit_score >= min_score` proceed to TailorResume.
-- **Robustness:** if the model returns an out-of-range or unparseable score, retry
-  once with a stricter instruction; on second failure record score `0` +
-  reasoning "unparseable" (the job simply won't clear the threshold). Never crash.
+- **Robustness:** temp 0; clamp to 1–10; retry once on unparseable JSON; on second
+  failure record score `0` + reasoning "unparseable" (won't clear the threshold).
+  Score once (blackboard `fit_score IS NULL`). Never crash.
+- **Better than ApplyPilot:** strict JSON (vs their brittle `SCORE:`/`REASONING:`
+  text parsing) + target-awareness, keeping their proven rubric + full-resume +
+  low-temperature core.
 
 ### TailorResume  (fabrication-guarded — safety-critical)
 - **Input:** `Profile.resume_facts` (ground truth) + `full_description`.
