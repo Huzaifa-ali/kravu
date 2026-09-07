@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     apply_url             TEXT,
     enriched_at           TEXT,
     enrich_error          TEXT,
+    enrich_attempts       INTEGER DEFAULT 0,
 
     -- Scoring
     fit_score             INTEGER,

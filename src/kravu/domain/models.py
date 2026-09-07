@@ -95,6 +95,7 @@ class Job:
     apply_url: str | None = None
     enriched_at: str | None = None
     enrich_error: str | None = None
+    enrich_attempts: int = 0
 
     # Scoring
     fit_score: int | None = None

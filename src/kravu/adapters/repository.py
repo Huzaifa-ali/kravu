@@ -16,7 +16,7 @@ from kravu.adapters.db import get_connection
 _JOB_COLUMNS = (
     "url", "title", "company", "location", "salary", "source", "apply_type",
     "description", "discovered_at",
-    "full_description", "apply_url", "enriched_at", "enrich_error",
+    "full_description", "apply_url", "enriched_at", "enrich_error", "enrich_attempts",
     "fit_score", "score_reasoning", "scored_at",
     "tailored_resume_path", "tailored_at",
     "cover_letter_path", "cover_needed", "cover_at",
@@ -67,7 +67,11 @@ class JobRepository:
     # -- Enrichment ---------------------------------------------------------
 
     def pending_enrichment(self, limit: int | None = None) -> list[Job]:
-        sql = "SELECT * FROM jobs WHERE full_description IS NULL AND enrich_error IS NULL"
+        # A job needs enrichment if it has no full description yet and hasn't
+        # exhausted its retry budget (3 attempts). This makes ExpandJob retryable
+        # across runs: pending jobs are picked up again until they succeed or hit 3.
+        sql = ("SELECT * FROM jobs "
+               "WHERE full_description IS NULL AND COALESCE(enrich_attempts, 0) < 3")
         if limit:
             sql += f" LIMIT {int(limit)}"
         return [_row_to_job(r) for r in self._conn.execute(sql)]
@@ -84,10 +88,19 @@ class JobRepository:
         )
         self._conn.commit()
 
-    def set_enrichment_error(self, url: str, error: str) -> None:
+    def bump_enrich_attempts(self, url: str) -> None:
         self._conn.execute(
-            "UPDATE jobs SET enrich_error = ?, enriched_at = ? WHERE url = ?",
-            (error[:500], _now(), url),
+            "UPDATE jobs SET enrich_attempts = COALESCE(enrich_attempts, 0) + 1 WHERE url = ?",
+            (url,),
+        )
+        self._conn.commit()
+
+    def set_enrichment_error(self, url: str, error: str) -> None:
+        # Record the latest error; do NOT set enriched_at — the job stays pending
+        # (retryable) until full_description is set or attempts reach 3.
+        self._conn.execute(
+            "UPDATE jobs SET enrich_error = ? WHERE url = ?",
+            (error[:500], url),
         )
         self._conn.commit()
 

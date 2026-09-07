@@ -9,7 +9,8 @@
   Postgres is a future swap, not a v1 dependency.
 - **LLM:** LiteLLM (one interface, any provider)
 - **Discovery:** JobSpy (`python-jobspy`) — multi-board, no API key
-- **Detail fetch (ExpandJob):** httpx; parsing via selectolax / trafilatura, LLM fallback
+- **Detail fetch (ExpandJob):** Playwright renders the page; JSON-LD/CSS extraction
+  via trafilatura / selectolax, with an LLM last-resort tier for unknown layouts
 - **Config:** PyYAML + python-dotenv; `profile.json` for user data
 - **Browser agent (later phase):** Playwright + `@playwright/mcp`, pluggable driver
 

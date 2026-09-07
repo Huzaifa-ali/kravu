@@ -94,8 +94,9 @@ truth and `compact_summary()` for prompts), `Job`, `ScoreResult`, and the
 1. **ExploreJobs** — discovery via configurable sources (JobSpy keyword search by
    default; ATS company boards opt-in). Merge, dedupe by normalized URL, persist
    new jobs. See §7a for the full contract.
-2. **ExpandJob** — fetch each job's full description (httpx + parse; LLM
-   fallback for unknown layouts). Record per-job errors; never crash the run.
+2. **ExpandJob** — Playwright renders each un-expanded job page, then extract the
+   full description via JSON-LD → CSS → LLM (last resort). 3 attempts, then mark
+   pending (non-fatal). See §7a.
 3. **ScoreJobFit** — one focused LLM call per job: compact profile + this JD → fit
    1–10 + reasoning. Only jobs ≥ `min_score` proceed.
 4. **TailorResume** — one LLM call per high-fit job: rewrite the resume for the
@@ -155,19 +156,29 @@ regex-scraped from prose. Each contract lists: input, output, DB writes, failure
   `apply_url`, `apply_type` (easy-apply | external | ats), discovered_at.
 - **Failure:** no jobs found is a valid (empty) outcome, reported clearly.
 
-
-- **Input:** a `Job` with `url` (and preview `description`), no `full_description`.
-- **Behavior:** fetch the job page via httpx, then a 3-tier extraction cascade:
-  (1) JSON-LD (`JobPosting` structured data via trafilatura),
-  (2) targeted CSS selectors (selectolax) for known layouts,
-  (3) trafilatura main-content extraction as a general fallback.
-  Stop at the first tier that yields a non-trivial description (≥ a min length).
+### ExpandJob
+- **Input:** jobs with no real `full_description` yet (blackboard query
+  `full_description IS NULL`). Jobs whose description already passed ExploreJobs'
+  quality gate are skipped (idempotent).
+- **Mechanism (robust, Playwright-based — same model as ApplyPilot):**
+  **Playwright renders** the page (headless Chromium; handles JS-heavy/blocked
+  pages — no httpx fallback), then a 3-tier extraction cascade against the rendered
+  DOM, cheapest first:
+  1. **JSON-LD** `JobPosting` structured data (free)
+  2. **CSS** selector patterns for known layouts (free)
+  3. **LLM-assisted extraction** — *last resort only*, fires when tiers 1 & 2 both
+     produce nothing; the LLM pulls the description from the messy rendered page
+     (1 LLM call). Provides robustness on unknown layouts.
+- **No skip-list:** every job is attempted regardless of source.
+- **Retry / give-up:** up to **3 attempts** per job (`enrich_attempts`). After 3
+  failures, mark the job **pending** (leave `full_description` NULL, set
+  `enrich_error`) and continue — non-fatal. The job keeps its discovery preview
+  `description` and still flows to ScoreJobFit. Pending jobs can be retried on a
+  later run.
 - **Output / DB:** on success → `full_description`, `apply_url` (if found),
-  `enriched_at`. On failure (all tiers empty, HTTP error, timeout) → `enrich_error`
-  set, `enriched_at` set; the job is skipped by later use cases. **No LLM call**
-  in v0.1 (LLM-assisted extraction is a possible later enhancement, not default).
-- **Give-up rule:** one attempt; a recorded `enrich_error` is terminal for v0.1.
-
+  `enriched_at`. On 3× failure → `enrich_attempts` = 3, `enrich_error` set, pending.
+- **Dependency note:** Playwright + a browser are v0.1 runtime deps (also required
+  by the Apply Agent, §8).
 ### ScoreJobFit
 - **Input:** `Profile.compact_summary()` + the job's `full_description`.
 - **LLM output (strict JSON):** `{"score": <int 1-10>, "reasoning": <str>,
@@ -280,12 +291,12 @@ ranges (`>=x,<next-major`); `uv.lock` captures exact resolved versions.
 | Package | Version | Used by |
 |---------|---------|---------|
 | `python-jobspy` | 1.1.82 | ExploreJobs |
-| `litellm` | 1.99.0 | ScoreJobFit / TailorResume / DraftCoverLetter |
+| `litellm` | 1.99.0 | ScoreJobFit / TailorResume / DraftCoverLetter / ExpandJob (LLM tier) |
 | `typer` | 0.27.2 | entrypoints/cli |
 | `rich` | 15.0.0 | CLI output |
-| `httpx` | 0.28.1 | ExpandJob (fetch) |
-| `selectolax` | 0.4.11 | ExpandJob (HTML/CSS parse) |
-| `trafilatura` | 2.2.0 | ExpandJob (content/JSON-LD extraction) |
+| `playwright` | 1.62.0 | ExpandJob (render pages) + Apply Agent (§8) |
+| `selectolax` | 0.4.11 | ExpandJob (CSS parse of rendered DOM) |
+| `trafilatura` | 2.2.0 | ExpandJob (JSON-LD / content extraction) |
 | `pyyaml` | 6.0.3 | searches.yaml |
 | `python-dotenv` | 1.2.3 | .env loading |
 
@@ -310,7 +321,7 @@ dependencies = [
     "litellm>=1.99,<2",
     "typer>=0.27,<1",
     "rich>=15,<16",
-    "httpx>=0.28,<1",
+    "playwright>=1.62,<2",
     "selectolax>=0.4.11,<1",
     "trafilatura>=2.2,<3",
     "pyyaml>=6.0.3,<7",
