@@ -31,12 +31,28 @@ class PipelinePhase(str, Enum):
 
 
 @dataclass(slots=True)
+class ResumeFacts:
+    """The non-negotiable ground truth extracted from the user's CV.
+
+    ``TailorResume`` may reorder, reframe, reword, and re-emphasize freely, but may
+    NEVER introduce a company, school, metric, or skill not present here. The
+    deterministic validator checks that preserved entities survive and that no
+    out-of-set skill is claimed; the LLM judge catches subtler fabrication.
+    """
+
+    raw_text: str = ""                       # the full original resume text (source of truth)
+    companies: list[str] = field(default_factory=list)   # employers that must be preserved
+    school: str = ""                         # education that must be preserved
+    metrics: list[str] = field(default_factory=list)     # real numbers/metrics — must not change
+    skills: list[str] = field(default_factory=list)      # the ONLY skills that may be claimed
+
+
+@dataclass(slots=True)
 class Profile:
     """The user's structured profile, parsed from their CV + preferences.
 
-    ``resume_facts`` is the ground truth that the ``TailorResume`` use case must
-    preserve verbatim — companies, titles, dates, metrics. The LLM may reorganize
-    and re-emphasize, but must never invent anything not present here.
+    ``resume_facts`` is the structured ground truth (see ``ResumeFacts``). The LLM
+    may reorganize and re-emphasize, but must never invent anything not present in it.
     """
 
     name: str = ""
@@ -45,17 +61,13 @@ class Profile:
     location: str = ""
     summary: str = ""
     skills: list[str] = field(default_factory=list)
-    resume_facts: str = ""          # raw resume text — the non-negotiable source of truth
+    resume_facts: ResumeFacts = field(default_factory=ResumeFacts)
     target_titles: list[str] = field(default_factory=list)
     target_locations: list[str] = field(default_factory=list)
     preferences: dict[str, Any] = field(default_factory=dict)
 
     def compact_summary(self) -> str:
-        """A short, focused profile block for LLM prompts.
-
-        Deliberately compact: we send this (not the full CV) on every scoring
-        call so the prompt stays small and the model doesn't lose the signal.
-        """
+        """A short, focused profile block for LLM prompts."""
         parts = []
         if self.headline:
             parts.append(f"Headline: {self.headline}")

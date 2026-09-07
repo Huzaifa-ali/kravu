@@ -100,8 +100,11 @@ truth and `compact_summary()` for prompts), `Job`, `ScoreResult`, and the
 3. **ScoreJobFit** — one focused LLM call per job (temp 0, rubric): full resume +
    this JD + targets → fit 1–10 + matched/missing keywords + reasoning. Only jobs
    ≥ `min_score` proceed. See §7a.
-4. **TailorResume** — one LLM call per high-fit job: rewrite the resume for the
-   role. Constrained to `resume_facts`; never fabricates. Writes a tailored file.
+4. **TailorResume** — per high-fit job: LLM returns structured sections, code
+   assembles the resume (header code-injected). Two-layer fabrication guard
+   (deterministic validator + always-on LLM judge) + banned-words; **zero
+   fabrication**. On guard failure after retries, leave un-tailored. Writes `.md` +
+   `_REPORT.json`. See §7a.
 5. **DraftCoverLetter** — conditional: decide if the role needs a cover letter;
    if so, write a targeted one; otherwise mark not-needed.
 
@@ -110,8 +113,10 @@ paths to tailored materials and the "why you fit" reasoning.
 
 **Setup-time use cases (not part of the pipeline):**
 - **BuildProfile** (`services/build_profile.py`) — takes raw resume text + the
-  `LLMClient` and returns a structured `Profile` (keeping the raw text as
-  `resume_facts`). Used by `kravu init`.
+  `LLMClient` and returns a structured `Profile`. Critically, it extracts the
+  structured `ResumeFacts` (raw_text + **companies** + **school** + **metrics** +
+  **skills**) — the ground truth the TailorResume validator checks against. Used by
+  `kravu init`.
 - **SuggestSearches** (`services/suggest_searches.py`) — takes the `Profile` + the
   `LLMClient` and proposes a `searches.yaml`: keyword searches (inferred target
   roles/seniority + a conservative location) and, **if the user enables ATS**, a
@@ -206,25 +211,45 @@ regex-scraped from prose. Each contract lists: input, output, DB writes, failure
   low-temperature core.
 
 ### TailorResume  (fabrication-guarded — safety-critical)
-- **Input:** `Profile.resume_facts` (ground truth) + `full_description`.
-- **LLM output (strict JSON):** `{"tailored_resume": <str>,
-  "claims": [<str>, ...]}` — the rewrite, plus the list of concrete factual claims
-  (employers, titles, dates, metrics, skills) the rewrite asserts.
-- **Fabrication guard (two layers):**
-  1. **Prompt constraint:** the model is instructed it may reorder, re-emphasize,
-     and rephrase, but must use ONLY facts present in `resume_facts`; inventing
-     anything is forbidden.
-  2. **Post-generation verification:** kravu checks each returned `claim` is
-     grounded in `resume_facts`. v0.1 uses a deterministic check — key tokens of a
-     claim (company names, numbers/metrics, degree/title terms) must appear in
-     `resume_facts` (normalized). Any claim that isn't grounded ⇒ the tailoring is
-     **rejected**: bump `tailor_attempts`, retry once with the offending claim
-     called out; if it fails again, **do not write a tailored file** and leave the
-     job un-tailored (it still appears in the shortlist with the original resume).
-- **DB:** on success → `tailored_resume_path`, `tailored_at`. On repeated failure →
-  `tailor_attempts` incremented, no path written.
-- This makes "never fabricate" (principles.md) an *enforced mechanism*, not just a
-  prompt request.
+- **Input:** structured `ResumeFacts` (raw_text + companies + school + metrics +
+  skills) + `full_description` (capped) + target role.
+- **Generation (strict JSON, LLM):** the LLM returns structured sections —
+  `{title, summary, skills{}, experience[], projects[], education}`. **Code
+  assembles** the final resume; the **header (name/contact) is always
+  code-injected from the profile, never LLM-generated** (eliminates that
+  fabrication class by construction). Note: strict JSON is for reliable
+  parsing/assembly, **not** a grounding mechanism (research shows JSON-alone can
+  worsen hallucination) — grounding comes from the two checks below.
+- **Two-layer fabrication guard (both required; standard 2026 practice):**
+  1. **Deterministic validator (cheap first pass):** preserved `companies` and
+     `school` must survive; real `metrics` must be unchanged; every claimed skill
+     must be in `ResumeFacts.skills` (fabrication-watchlist for out-of-set
+     languages/frameworks/certs); detect LLM self-talk leaks; **banned-words** list
+     (reject AI-slop phrasing — a detection-avoidance necessity, per 2026 hiring
+     research). Hard errors → retry.
+  2. **LLM-as-judge (ALWAYS on):** a separate reference-free judge compares the
+     tailored resume against the original and flags *lies vs. legitimate
+     rewording*. Catches plausible fabrication the deterministic pass misses
+     (lexical checks miss fluent lies — hence a semantic judge).
+- **Honesty line — ZERO fabrication (stricter than ApplyPilot):** reorder,
+  reframe, reword, drop, re-emphasize, rewrite title/summary — all unlimited.
+  Inventing or stretching skills, companies, roles, degrees, certifications, or
+  metrics — **blocked outright. No "adjacent/learnable skill" tolerance.** (2026
+  hiring research: "skillfishing" — added/stretched skills — is what gets
+  candidates rejected and fails them on day one. If the user truly has an adjacent
+  skill, they add it themselves on review; kravu won't insert it.)
+- **Retry / give-up:** fresh conversation each attempt (avoids apologetic
+  spirals), up to `tailor_attempts` (5), prior issues noted. On exhaustion: **write
+  nothing** — leave the job un-tailored (it stays in the shortlist with the base
+  resume). Never emit a resume that failed the guard.
+- **Output:** tailored resume `.md` + a `_REPORT.json` (validator + judge results)
+  for transparency — the user vets what was changed ("AI is the guide, you decide").
+- **DB:** on success → `tailored_resume_path`, `tailored_at`, `tailor_attempts`.
+  On failure → `tailor_attempts` bumped, no path written.
+- This makes "never fabricate" (principles.md) an *enforced, layered mechanism*.
+- **Better than ApplyPilot:** strict JSON (vs hand-parsing), judge **always-on**
+  (vs their skippable lenient mode), and **zero-fabrication** (vs their tolerance
+  for added "learnable" skills) — the honesty line the 2026 research supports.
 
 ### DraftCoverLetter  (conditional)
 - **Input:** `Profile` + `full_description` (+ the tailored resume if present).

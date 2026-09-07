@@ -17,12 +17,19 @@ non-negotiable and protect users, the project's reputation, and its usefulness.
 - The tailoring stage may reorganize, re-emphasize, and select from the user's
   real resume facts. It must NEVER invent employers, titles, dates, degrees,
   metrics, or skills the user does not have.
-- `Profile.resume_facts` is the ground truth. Tailoring is constrained to it.
-- **Enforced, not just requested.** "Never fabricate" is a *mechanism*: LLM
-  rewrites must return the factual claims they assert, and kravu verifies each
-  claim is grounded in `resume_facts` before writing any tailored output. Ungrounded
-  claims ⇒ reject + retry; persistent failure ⇒ write nothing (leave the job
-  un-tailored) rather than emit fabricated material. See spec §7a (TailorResume).
+- `Profile.resume_facts` (structured: companies/school/metrics/skills + raw text)
+  is the ground truth. Tailoring is constrained to it.
+- **Enforced, layered, zero-tolerance.** "Never fabricate" is a *mechanism*, not a
+  request: (1) the resume header is code-injected, not LLM-generated; (2) a
+  deterministic validator checks preserved companies/school/metrics survive and no
+  out-of-set skill is claimed, plus a banned-words list that rejects AI-slop
+  phrasing (a 2026 detection-avoidance necessity); (3) an always-on LLM judge
+  catches subtler fabrication. Reordering/reframing/rewording is unlimited;
+  inventing or stretching skills, companies, degrees, or metrics is blocked
+  outright — **no "adjacent/learnable skill" tolerance** (research: "skillfishing"
+  gets candidates rejected). On guard failure after retries, write nothing rather
+  than emit fabricated material. A `_REPORT.json` shows the user what changed. See
+  spec §7a (TailorResume).
 
 ## Respect platforms and privacy
 
