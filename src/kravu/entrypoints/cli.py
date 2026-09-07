@@ -56,7 +56,7 @@ def _load_profile() -> Profile:
     )
 
 
-def _sources(searches: dict[str, Any]) -> list[DiscoverySource]:
+def _sources() -> list[DiscoverySource]:
     return [JobSpySource(), AtsSource()]
 
 
@@ -66,7 +66,7 @@ def _pipeline(profile: Profile, searches: dict[str, Any]) -> Pipeline:
     min_score = int(searches.get("min_score", config.min_score()))
     cover_policy = str(searches.get("cover_letter", config.COVER_LETTER_DEFAULT))
     steps = build_pipeline_steps(
-        sources=_sources(searches),
+        sources=_sources(),
         llm=LiteLLMClient(),
         profile=profile,
         renderer=PlaywrightPageRenderer(),
@@ -145,6 +145,11 @@ def apply(
 ) -> None:
     """Run the gated Apply Agent over ready jobs (human-approval by default)."""
     config.load_env()
+    try:
+        _load_profile()
+    except FileNotFoundError:
+        console.print("No profile found. Run `kravu init` first.")
+        raise typer.Exit(code=1) from None
     init_db()
     searches = config.load_searches()
     min_score = int(searches.get("min_score", config.min_score()))
