@@ -86,3 +86,21 @@ def test_empty_board_is_recorded_not_crashed() -> None:
 def test_disabled_ats_returns_empty() -> None:
     source = AtsSource(fetch=_fake_fetch({}))
     assert source.discover({"sources": {"ats": {"enabled": False}}}) == []
+
+
+def test_malformed_payload_is_recorded_not_raised() -> None:
+    url = "https://boards-api.greenhouse.io/v1/boards/bad/jobs"
+    # A string body (e.g. an HTML error page parsed oddly) would break `.get`.
+    source = AtsSource(fetch=_fake_fetch({url: "<html>error</html>"}))
+    searches = {
+        "sources": {
+            "ats": {
+                "enabled": True,
+                "companies": [{"ats": "greenhouse", "slug": "bad"}],
+            }
+        }
+    }
+    jobs = source.discover(searches)  # must not raise
+    assert jobs == []
+    assert "greenhouse:bad" in source.notes
+    assert source.notes["greenhouse:bad"].startswith("failed")

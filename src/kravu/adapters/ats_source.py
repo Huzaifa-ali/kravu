@@ -58,10 +58,10 @@ class AtsSource:
             return []
         try:
             payload = self._fetch(url)
+            jobs = self._map(ats, slug, payload)
         except Exception as exc:  # noqa: BLE001 - record and continue per spec
             self.notes[key] = f"failed: {exc}"
             return []
-        jobs = self._map(ats, slug, payload)
         if not jobs:
             self.notes[key] = "empty"
         return jobs
