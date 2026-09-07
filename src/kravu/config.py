@@ -75,6 +75,9 @@ DEFAULTS: dict[str, Any] = {
     "min_score": 7,
 }
 
+# Cover-letter policy is read from searches.yaml (run config), not the env.
+COVER_LETTER_DEFAULT = "only_if_required"   # always | only_if_required | never
+
 
 def model() -> str:
     return os.environ.get("KRAVU_MODEL") or DEFAULTS["model"]

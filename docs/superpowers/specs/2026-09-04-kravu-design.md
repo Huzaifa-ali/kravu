@@ -105,8 +105,9 @@ truth and `compact_summary()` for prompts), `Job`, `ScoreResult`, and the
    (deterministic validator + always-on LLM judge) + banned-words; **zero
    fabrication**. On guard failure after retries, leave un-tailored. Writes `.md` +
    `_REPORT.json`. See §7a.
-5. **DraftCoverLetter** — conditional: decide if the role needs a cover letter;
-   if so, write a targeted one; otherwise mark not-needed.
+5. **DraftCoverLetter** — governed by a user policy (`always` / `only_if_required`
+   (default, deterministic JD detection) / `never`). When drafting: 3-para,
+   <250-word, engineering-voice letter; zero fabrication + validation. See §7a.
 
 Output: `kravu status` shows a ranked shortlist — high-fit jobs, best first, with
 paths to tailored materials and the "why you fit" reasoning.
@@ -251,15 +252,33 @@ regex-scraped from prose. Each contract lists: input, output, DB writes, failure
   (vs their skippable lenient mode), and **zero-fabrication** (vs their tolerance
   for added "learnable" skills) — the honesty line the 2026 research supports.
 
-### DraftCoverLetter  (conditional)
-- **Input:** `Profile` + `full_description` (+ the tailored resume if present).
-- **Need decision (LLM, strict JSON):** `{"needed": <bool>, "reason": <str>,
-  "cover_letter": <str|null>}`. The model decides `needed` from signals in the JD
-  (explicit "cover letter required/optional", application form expectations); if
-  `needed` is false, `cover_letter` is null.
-- **DB:** `cover_needed` = needed; if needed → write file, set `cover_letter_path`;
-  always set `cover_at`. `bump cover_attempts` on failure (cap enforced by repo).
-- Same fabrication discipline as TailorResume applies to any factual claims.
+### DraftCoverLetter  (conditional — user policy)
+- **Input:** `Profile` + `full_description` + the tailored resume (or base resume).
+- **Who decides "needed" — a user policy** in config: `cover_letter: always |
+  only_if_required | never` (default `only_if_required`). kravu never uses an LLM
+  to *decide* whether one is needed — code decides, the LLM only *writes*:
+  - `never` → skip; mark `cover_needed = false`, no LLM call.
+  - `always` → draft for every tailored job.
+  - `only_if_required` → **deterministic** scan of the JD for cover-letter signals
+    ("cover letter required/optional", "please include a cover letter"); draft only
+    if detected, else `cover_needed = false`.
+- **Generation (when drafting; proven mechanics adopted from ApplyPilot):** 3 short
+  paragraphs, <250 words, engineering voice (open with a thing *you built* that
+  solves *their* problem; every sentence carries a number, tool, or outcome); must
+  start "Dear Hiring Manager,". Auto-sanitize (em-dashes/smart-quotes) and
+  strip any "Here is the letter:" preamble.
+- **Zero fabrication (same line as TailorResume):** only skills in
+  `ResumeFacts.skills` may be mentioned. If the JD asks for tools the user lacks,
+  write about the *work*, not the tools.
+- **Validation:** banned-words + LLM-leak detection + word-count + must-start-"Dear".
+  Fresh conversation per retry, up to `cover_attempts` (5). On exhaustion, don't
+  write a broken/fabricated letter.
+- **Output:** cover letter `.md` under `~/.kravu/cover_letters/`.
+- **DB:** `cover_needed` (bool), `cover_letter_path` (if written), `cover_at`,
+  `cover_attempts`.
+- **Better than ApplyPilot:** they blindly write a letter for every job (wasted
+  calls, clutter); kravu respects a user policy and uses cheap deterministic
+  detection for "required" instead of an LLM guess.
 
 ### Output format (v0.1)
 - Tailored resumes and cover letters are written as **Markdown** (`.md`) under
@@ -455,6 +474,9 @@ defaults:                      # merged into every JobSpy search unless overridd
   results_wanted: 25
   hours_old: 168               # last 7 days
   description_format: markdown
+
+cover_letter: only_if_required # always | only_if_required (default) | never
+min_score: 7                   # fit threshold to proceed to tailoring
 
 searches:                      # keywords — the PRIMARY user input (drives JobSpy)
   - name: devops-us            # kravu label (status/logs); not sent to JobSpy
