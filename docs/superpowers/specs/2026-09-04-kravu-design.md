@@ -136,9 +136,26 @@ but they do **not** run during `kravu run`.
 
 ## 7a. Use-case contracts
 
-Precise input/output for each pipeline use case. LLM calls return **strict JSON**
-(via LiteLLM's JSON/response-format support) so parsing is deterministic, not
-regex-scraped from prose. Each contract lists: input, output, DB writes, failure.
+Precise input/output for each pipeline use case. LLM calls return **JSON** so parsing
+is deterministic, not regex-scraped from prose. Each contract lists: input, output, DB
+writes, failure.
+
+**JSON strategy (evidence-based, binding for all LLM calls):**
+- **Instructed-JSON + defensive parsing, not hard constrained-decoding.** The prompt
+  asks for JSON and the adapter parses/validates it (retry once on unparseable, then the
+  documented failure path). kravu does **not** assume `response_format`/JSON-mode was
+  honored: LiteLLM's structured-output support is provider-dependent and some providers
+  silently drop it and return prose (see §9). If a provider does honor `response_format`,
+  the adapter may pass it as a hint, but correctness never depends on it.
+- **Reasoning-first key order.** For any reasoning-bearing call (ScoreJobFit,
+  TailorResume, the fabrication judge), the schema lists reasoning/analysis fields
+  **before** the verdict/score field. Constraining a model to emit the answer before its
+  reasoning measurably degrades reasoning quality (Wu/Tam et al., "Let Me Speak Freely?",
+  arXiv 2408.02442 — JSON-mode that forced answer-before-reason collapsed chain-of-thought
+  with no parsing-error cause). Strict JSON is for *reliable parsing*, not grounding.
+- **Flattened input for LLM extraction.** When an LLM must extract from a page
+  (ExpandJob tier-3), it receives cleaned/flattened text, not raw HTML — flat input yields
+  higher extraction accuracy and less hallucination (NEXT-EVAL, arXiv 2505.17125).
 
 ### ExploreJobs
 - **Input:** the `sources` config + `searches` (from `searches.yaml`).
@@ -146,11 +163,19 @@ regex-scraped from prose. Each contract lists: input, output, DB writes, failure
   - **JobSpy (default, enabled):** keyword-driven. Runs each entry in `searches`
     (search_term + location + filters) across the configured `sites`.
   - **ATS (opt-in, disabled by default):** company-driven. Pulls each configured
-    company's board via the ATS JSON API (Greenhouse, Lever, Ashby). Company slugs
-    may be LLM-proposed by `SuggestSearches` (from keywords + resume) and reviewed;
-    each slug is **validated against the ATS API** and silently dropped if invalid.
-    (kravu never requires the user to know company names — keywords remain the
-    primary input; ATS companies are derived/optional.)
+    company's board via the ATS JSON API (Greenhouse
+    `boards-api.greenhouse.io/v1/boards/{token}/jobs`, Lever
+    `api.lever.co/v0/postings/{token}?mode=json`, Ashby
+    `api.ashbyhq.com/posting-api/job-board/{token}`; open JSON, no key/proxy — endpoints
+    verified live Aug 2026). Company slugs may be LLM-proposed by `SuggestSearches` (from
+    keywords + resume) and reviewed; each slug is **validated against the ATS API** and
+    silently dropped if invalid. **Slug-validation note:** a wrong slug returns HTTP 200
+    with an empty list (not 404), so "not on this ATS" and "typo" are indistinguishable
+    from the response — treat empty as a real, reportable outcome, not a crash.
+    **Timestamp note:** Lever returns `createdAt` as epoch-milliseconds while
+    Greenhouse/Ashby use ISO-8601; normalize before any recency filter or it silently
+    drops all Lever results. (kravu never requires the user to know company names —
+    keywords remain the primary input; ATS companies are derived/optional.)
 - **Behavior / "do better than ApplyPilot":**
   1. **Structured location** — persist JobSpy's structured location + `is_remote`
      as real fields; location filtering is precise, not substring guessing.
@@ -167,6 +192,9 @@ regex-scraped from prose. Each contract lists: input, output, DB writes, failure
 - **Persisted fields:** url, title, company, location (structured), is_remote,
   salary, source/site, preview `description`, promoted `full_description` (gated),
   `apply_url`, `apply_type` (easy-apply | external | ats), discovered_at.
+  **`apply_type` note:** JobSpy's LinkedIn easy-apply filter is documented as no longer
+  reliable, so `apply_type=easy-apply` inferred from LinkedIn discovery is best-effort;
+  the Apply Agent (§8) re-checks the actual page before acting.
 - **Failure:** no jobs found is a valid (empty) outcome, reported clearly.
 
 ### ExpandJob
@@ -177,11 +205,20 @@ regex-scraped from prose. Each contract lists: input, output, DB writes, failure
   **Playwright renders** the page (headless Chromium; handles JS-heavy/blocked
   pages — no httpx fallback), then a 3-tier extraction cascade against the rendered
   DOM, cheapest first:
-  1. **JSON-LD** `JobPosting` structured data (free)
-  2. **CSS** selector patterns for known layouts (free)
+  1. **JSON-LD** `JobPosting` structured data (free) — a direct parse of
+     `<script type="application/ld+json">` blocks (stdlib `json`), filtered to the
+     `JobPosting` type. This is the most durable tier: Google Search requires
+     schema.org `JobPosting` JSON-LD on job pages, and script-embedded data outlives
+     front-end markup.
+  2. **CSS** selector patterns for known layouts (free) — via `selectolax` (fast
+     Lexbor CSS-selector parser); `trafilatura` handles main-content/boilerplate
+     cleanup of the extracted region.
   3. **LLM-assisted extraction** — *last resort only*, fires when tiers 1 & 2 both
-     produce nothing; the LLM pulls the description from the messy rendered page
-     (1 LLM call). Provides robustness on unknown layouts.
+     produce nothing; the LLM pulls the description from the **cleaned/flattened page
+     text (not raw HTML)** in 1 call. Flattened input gives higher extraction accuracy
+     and less hallucination (NEXT-EVAL, arXiv 2505.17125); deterministic tiers run
+     first because even SOTA agents extract poorly from complex raw pages
+     (arXiv 2504.12682). Provides robustness on unknown layouts.
 - **No skip-list:** every job is attempted regardless of source.
 - **Retry / give-up:** up to **3 attempts** per job (`enrich_attempts`). After 3
   failures, mark the job **pending** (leave `full_description` NULL, set
@@ -197,14 +234,21 @@ regex-scraped from prose. Each contract lists: input, output, DB writes, failure
 - **Input:** full `resume_facts` (ground truth, not a lossy summary) + the job's
   `full_description` (capped ~6000 chars) + the user's targets/preferences from
   `searches` (makes scoring **target-aware** — a lightweight two-way fit).
-- **LLM call:** strict JSON, **temperature 0**, with an explicit **rubric** in the
-  prompt anchoring the scale (9-10 strong / 7-8 good / 5-6 moderate / 3-4 weak /
-  1-2 poor).
-- **LLM output (strict JSON):** `{"score": <int 1-10>, "matched_keywords":
-  [<str>...], "missing_skills": [<str>...], "reasoning": <2-3 sentences>}`.
+- **LLM call:** instructed-JSON (see §7a JSON strategy), **temperature 0**, with an
+  explicit **rubric** in the prompt anchoring the scale (9-10 strong / 7-8 good / 5-6
+  moderate / 3-4 weak / 1-2 poor). Input is the **structured** `resume_facts`, which
+  measurably improves scoring vs. raw text (Qiu et al., arXiv 2504.02870, extraction
+  ablation).
+- **LLM output (JSON, reasoning-first order):** `{"reasoning": <2-3 sentences>,
+  "matched_keywords": [<str>...], "missing_skills": [<str>...], "score": <int 1-10>}` —
+  `score` is emitted **last** so the model reasons before committing to a number
+  (arXiv 2408.02442).
 - **No hard filters inside scoring:** categorical location/remote filtering stays in
-  ExploreJobs. Research (2026 ATS/matching literature) shows aggressive keyword
-  hard-filters wrongly reject good fits, so scoring judges fit holistically.
+  ExploreJobs. Research shows aggressive keyword hard-filters wrongly reject good fits
+  (semantic matching beats keyword matching ~2:1; LLM fit scores correlate strongly with
+  HR judgments — Qiu et al. 2504.02870, PC≈0.84), so scoring judges fit holistically.
+  Scores are advisory and shown to the user with reasoning; kravu ranks *for the user*,
+  not employer-side selection.
 - **No fallback:** a model is always required (hard-stop preflight); there is no
   offline/no-model scoring path.
 - **DB:** `fit_score` = score; `score_reasoning` = matched_keywords + missing_skills
@@ -213,38 +257,46 @@ regex-scraped from prose. Each contract lists: input, output, DB writes, failure
 - **Robustness:** temp 0; clamp to 1–10; retry once on unparseable JSON; on second
   failure record score `0` + reasoning "unparseable" (won't clear the threshold).
   Score once (blackboard `fit_score IS NULL`). Never crash.
-- **Better than ApplyPilot:** strict JSON (vs their brittle `SCORE:`/`REASONING:`
-  text parsing) + target-awareness, keeping their proven rubric + full-resume +
-  low-temperature core.
+- **Better than ApplyPilot:** instructed-JSON with defensive parsing (vs their brittle
+  `SCORE:`/`REASONING:` text parsing) + target-awareness, keeping their proven rubric +
+  full-resume + low-temperature core.
 
 ### TailorResume  (fabrication-guarded — safety-critical)
 - **Input:** structured `ResumeFacts` (raw_text + companies + school + metrics +
   skills) + `full_description` (capped) + target role.
-- **Generation (strict JSON, LLM):** the LLM returns structured sections —
-  `{title, summary, skills{}, experience[], projects[], education}`. **Code
-  assembles** the final resume; the **header (name/contact) is always
-  code-injected from the profile, never LLM-generated** (eliminates that
-  fabrication class by construction). Note: strict JSON is for reliable
-  parsing/assembly, **not** a grounding mechanism (research shows JSON-alone can
-  worsen hallucination) — grounding comes from the two checks below.
+- **Generation (instructed-JSON, LLM):** the LLM returns structured sections —
+  reasoning-first where applicable, then `{title, summary, skills{}, experience[],
+  projects[], education}`. **Code assembles** the final resume; the **header
+  (name/contact) is always code-injected from the profile, never LLM-generated**
+  (eliminates that fabrication class by construction). This section-by-section,
+  header-injected shape is the pattern independently published in ResumeFlow (SIGIR '24,
+  arXiv 2402.06221), which also avoids long-context "lost-in-the-middle" errors. Note:
+  JSON is for reliable parsing/assembly, **not** a grounding mechanism — JSON-alone can
+  worsen hallucination (arXiv 2408.02442); grounding comes from the two checks below.
 - **Two-layer fabrication guard (both required; standard 2026 practice):**
   1. **Deterministic validator (cheap first pass):** preserved `companies` and
      `school` must survive; real `metrics` must be unchanged; every claimed skill
      must be in `ResumeFacts.skills` (fabrication-watchlist for out-of-set
      languages/frameworks/certs); detect LLM self-talk leaks; **banned-words** list
-     (reject AI-slop phrasing — a detection-avoidance necessity, per 2026 hiring
-     research). Hard errors → retry.
+     (reject generic AI-slop phrasing recruiters skip — a **writing-quality** measure,
+     not a claim to evade AI-text detectors, which are unreliable in practice per
+     arXiv 2412.05139 / 2603.23146). Hard errors → retry.
   2. **LLM-as-judge (ALWAYS on):** a separate reference-free judge compares the
      tailored resume against the original and flags *lies vs. legitimate
      rewording*. Catches plausible fabrication the deterministic pass misses
-     (lexical checks miss fluent lies — hence a semantic judge).
+     (lexical checks miss fluent lies — hence a semantic judge). Reference-free
+     LLM-as-judge for faithfulness is an established, peer-reviewed approach
+     (FaithJudge, EMNLP '25 Industry, arXiv 2505.04847); the judge prompt includes a
+     few **exemplar fabrications** (which sharpen it, per that work).
 - **Honesty line — ZERO fabrication (stricter than ApplyPilot):** reorder,
   reframe, reword, drop, re-emphasize, rewrite title/summary — all unlimited.
   Inventing or stretching skills, companies, roles, degrees, certifications, or
   metrics — **blocked outright. No "adjacent/learnable skill" tolerance.** (2026
   hiring research: "skillfishing" — added/stretched skills — is what gets
-  candidates rejected and fails them on day one. If the user truly has an adjacent
-  skill, they add it themselves on review; kravu won't insert it.)
+  candidates rejected and fails them on day one (documented 2026 phenomenon, e.g.
+  SHRM; LLM-fabricated career histories are now themselves a detection target,
+  arXiv 2509.19677). If the user truly has an adjacent skill, they add it themselves
+  on review; kravu won't insert it.)
 - **Retry / give-up:** fresh conversation each attempt (avoids apologetic
   spirals), up to `tailor_attempts` (5), prior issues noted. On exhaustion: **write
   nothing** — leave the job un-tailored (it stays in the shortlist with the base
@@ -254,9 +306,10 @@ regex-scraped from prose. Each contract lists: input, output, DB writes, failure
 - **DB:** on success → `tailored_resume_path`, `tailored_at`, `tailor_attempts`.
   On failure → `tailor_attempts` bumped, no path written.
 - This makes "never fabricate" (principles.md) an *enforced, layered mechanism*.
-- **Better than ApplyPilot:** strict JSON (vs hand-parsing), judge **always-on**
-  (vs their skippable lenient mode), and **zero-fabrication** (vs their tolerance
-  for added "learnable" skills) — the honesty line the 2026 research supports.
+- **Better than ApplyPilot:** instructed-JSON with defensive parsing (vs hand-parsing),
+  judge **always-on** (vs their skippable lenient mode), and **zero-fabrication** (vs
+  their tolerance for added "learnable" skills) — the honesty line the 2026 research
+  supports.
 
 ### DraftCoverLetter  (conditional — user policy)
 - **Input:** `Profile` + `full_description` + the tailored resume.
@@ -267,7 +320,10 @@ regex-scraped from prose. Each contract lists: input, output, DB writes, failure
   - `always` → draft for every tailored job.
   - `only_if_required` → **deterministic** scan of the JD for cover-letter signals
     ("cover letter required/optional", "please include a cover letter"); draft only
-    if detected, else `cover_needed = false`.
+    if detected, else `cover_needed = false`. **Limitation:** some employers expect a
+    letter even when the posting doesn't say so (surveys report ~a third), so
+    text-signal detection can under-trigger; `always` is the escape hatch for users who
+    prefer a letter for every tailored job.
 - **Generation (when drafting; proven mechanics adopted from ApplyPilot):** 3 short
   paragraphs, <250 words, engineering voice (open with a thing *you built* that
   solves *their* problem; every sentence carries a number, tool, or outcome); must
@@ -284,7 +340,11 @@ regex-scraped from prose. Each contract lists: input, output, DB writes, failure
   `cover_attempts`.
 - **Better than ApplyPilot:** they blindly write a letter for every job (wasted
   calls, clutter); kravu respects a user policy and uses cheap deterministic
-  detection for "required" instead of an LLM guess.
+  detection for "required" instead of an LLM guess. The draft-then-user-edit model
+  is empirically supported: access to AI cover-letter drafting raised text–job
+  alignment and callback rates, and *time spent editing the draft* correlated with
+  hiring success (difference-in-differences field study, arXiv 2509.25054) — so kravu
+  presents the letter as a starting point the user refines, never a finished artifact.
 
 ### Output format (v0.1)
 - Tailored resumes and cover letters are written as **Markdown** (`.md`) under
@@ -339,10 +399,13 @@ irreversible real-world side effects. Design:
   browser via its headless CLI and manages its own memory/context. The driver is a
   Strategy behind a `BrowserAgentDriver` interface. **v0.1 ships the Kiro driver as
   default and the pluggable interface**, with additional drivers supported/added
-  (Claude Code, Codex, Cursor, Gemini CLI). Verified invocations:
+  (Claude Code, Codex, Cursor, Gemini CLI). Invocation shapes (⚠️ **confirm each
+  against its installed CLI at implementation** — first-party/internal flags move,
+  same caveat as the model string; the `@playwright/mcp` tool layer itself is
+  confirmed — microsoft/playwright-mcp):
   Kiro (`kiro --no-interactive`),
-  Claude Code (`claude -p --mcp-config`, JSON config),
-  Codex (`codex exec --json`, **TOML** config),
+  Claude Code (`claude -p --mcp-config`, JSON config — flags confirmed via docs.claude.com),
+  Codex (`codex exec --json`, **TOML** config — TOML-not-JSON confirmed),
   Gemini CLI (`gemini -p --output-format json`),
   Cursor (`cursor-agent -p --output-format stream-json --approve-mcps`).
   Config format differs per agent (Codex=TOML, others=JSON) — encapsulated in each
@@ -353,7 +416,12 @@ irreversible real-world side effects. Design:
 - **Process control:** Python `subprocess` runner spawns browser + agent per job,
   captures output, enforces timeout, records outcome + attempts to the DB.
 - **Safety:** **human-approval gate is the default** (prepare + queue; user
-  approves before submit). Auto-submit is opt-in.
+  approves before submit). Auto-submit is opt-in. This default is what the web-agent
+  research supports: agents remain far from reliable full task automation
+  (WorkArena, arXiv 2403.07718) and are brittle in exactly the ways an application
+  form hits — CAPTCHA, pop-ups, navigation (BrowserArena, arXiv 2510.02418) — with
+  real-world reliability well below sandbox benchmarks (WAREX, arXiv 2510.03285) and
+  documented misuse surface (SafeArena, arXiv 2503.04957).
 - **Memory:** delegated to the driving agent (Kiro/Claude Code/etc. manage their
   own context). kravu builds no working-memory layer.
 - **Apply-mode config:** `apply: { mode: human_gate (default) | auto,
@@ -373,6 +441,13 @@ irreversible real-world side effects. Design:
 - **LiteLLM**; model chosen via `KRAVU_MODEL`. Each call is small, single-job,
   structured. No conversation history accumulates; no external memory framework
   (Mem0/Letta/Zep). Durable memory is the DB.
+- **Structured output is provider-dependent — parse defensively.** LiteLLM exposes
+  `response_format`/JSON-mode, but support is uneven: some providers silently drop it
+  and return prose while reporting success (e.g. BerriAI/litellm issues #37720,
+  disc #11652). The `LLMClient` adapter therefore treats JSON as instructed-not-
+  guaranteed: it parses/validates every response, retries once on unparseable output,
+  and falls to the documented per-use-case failure path — never assuming the model
+  honored the format. (See §7a JSON strategy.)
 - **kravu never handles API keys.** Keys are the user's responsibility, set in the
   environment (or `~/.kravu/.env`) *before* using kravu — standard 12-factor. `init`
   selects the *provider/model*; it never prompts for or stores a key.

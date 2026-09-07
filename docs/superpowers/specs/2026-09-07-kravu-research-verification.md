@@ -194,25 +194,42 @@ is consistent with principles.md and the skillfishing findings.
 
 ## Recommended spec edits (small, optional — for your approval)
 
-1. **§7a ExploreJobs — add robustness notes:** wrong ATS slug → HTTP 200 empty (not 404);
-   Lever `createdAt` epoch-ms vs ISO; Greenhouse department join; LinkedIn easy-apply filter
-   unreliable → `apply_type=easy-apply` from LinkedIn is best-effort.
-2. **§7a ExpandJob — precision:** state that tier-1 JSON-LD is a direct
-   `<script type="application/ld+json">` parse; `trafilatura` is for content cleanup,
-   `selectolax` for CSS.
-3. **§7a DraftCoverLetter — one sentence:** note that `only_if_required` can under-trigger
-   (some employers expect a letter even when "optional"); `always` is the escape hatch.
-4. **§9 / LLM adapter — one sentence:** `response_format` support is provider-dependent; the
-   adapter parses/validates defensively and never assumes JSON was honored.
-5. **Provenance (optional):** cite Tam et al. 2024, FaithJudge, and SHRM "skillfishing" in
-   §7a/principles.md so the anti-fabrication design's research basis is documented.
-6. **§8 — extend the UNVERIFIED flag** already applied to the model string to also cover the
-   Kiro/Cursor/Gemini CLI invocation flags (confirm against each CLI at build).
+## Recommended spec edits — APPLIED 2026-09-07 (commit follows)
 
-**Bottom line:** the spec's decisions hold up against current research. The evidence
-*strengthens* the safety-critical parts (anti-fabrication two-layer guard, holistic scoring,
-policy-based cover letters, human-gated apply). Nothing here requires a redesign; the notes
-above are refinements to fold into the implementation plan.
+All of the following were folded into `2026-09-04-kravu-design.md`:
+
+1. **§7a ExploreJobs — robustness notes:** ATS endpoints named; wrong slug → HTTP 200
+   empty (not 404); Lever `createdAt` epoch-ms vs ISO; LinkedIn easy-apply filter
+   unreliable → `apply_type=easy-apply` is best-effort. ✅
+2. **§7a ExpandJob — precision:** tier-1 JSON-LD is a direct
+   `<script type="application/ld+json">` parse; `selectolax` for CSS; `trafilatura` for
+   content cleanup; **LLM tier-3 receives flattened text, not raw HTML** (NEXT-EVAL). ✅
+3. **§7a DraftCoverLetter:** `only_if_required` can under-trigger (~⅓ expect a letter even
+   when unstated); `always` is the escape hatch. Draft-then-edit backed by arXiv 2509.25054. ✅
+4. **§9 / LLM adapter:** `response_format` is provider-dependent → parse defensively,
+   never assume JSON was honored. ✅
+5. **Provenance:** cited Tam 2408.02442, ResumeFlow (SIGIR '24) 2402.06221, FaithJudge
+   (EMNLP '25) 2505.04847, Qiu 2504.02870, NEXT-EVAL 2505.17125, the web-agent suite
+   (WorkArena/BrowserArena/SafeArena/WAREX), the cover-letter DiD study, and SHRM
+   "skillfishing" across §7a/§8/§9. ✅
+6. **§8:** extended the UNVERIFIED flag from the model string to the Kiro/Cursor/Gemini
+   CLI invocation flags (confirm each at build); `@playwright/mcp` tool layer confirmed. ✅
+
+**Two additional evidence-based design changes adopted (new, from the deep-read):**
+
+7. **Reasoning-first JSON key order** for all reasoning-bearing calls (ScoreJobFit,
+   TailorResume, judge): schema lists reasoning/analysis fields **before** the
+   score/verdict field. Basis: Tam et al. 2408.02442 (answer-before-reason collapses
+   chain-of-thought). ScoreJobFit output reordered to
+   `{reasoning, matched_keywords, missing_skills, score}`. ✅
+8. **Instructed-JSON + defensive parsing** chosen over hard constrained-decoding as the
+   binding JSON strategy for every LLM call (new §7a "JSON strategy" block). Basis:
+   Tam 2408.02442 + provider-variance evidence (§9). ✅
+
+**Bottom line:** the spec's decisions hold up against current research; the evidence
+*strengthens* the safety-critical parts. The two design changes (#7, #8) and the input/
+library precisions (#2) are the only substantive additions — all now in the spec and
+ready for the implementation plan.
 
 
 ---
