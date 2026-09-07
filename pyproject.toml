@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=9.1,<10", "ruff>=0.16,<1", "mypy>=2.3,<3"]
+dev = ["pytest>=9.1,<10", "ruff>=0.16,<1", "mypy>=2.3,<3", "types-PyYAML>=6,<7"]
 
 [project.scripts]
 kravu = "kravu.entrypoints.cli:app"

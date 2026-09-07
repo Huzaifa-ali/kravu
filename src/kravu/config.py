@@ -28,27 +28,34 @@ def app_home() -> Path:
 
 # Derived paths -------------------------------------------------------------
 
+
 def db_path() -> Path:
+    """Path to the SQLite database file."""
     return app_home() / "kravu.db"
 
 
 def profile_path() -> Path:
+    """Path to the user's ``profile.json``."""
     return app_home() / "profile.json"
 
 
 def searches_path() -> Path:
+    """Path to the user's ``searches.yaml``."""
     return app_home() / "searches.yaml"
 
 
 def tailored_dir() -> Path:
+    """Directory for tailored resumes."""
     return app_home() / "tailored"
 
 
 def cover_dir() -> Path:
+    """Directory for generated cover letters."""
     return app_home() / "cover_letters"
 
 
 def log_dir() -> Path:
+    """Directory for log files."""
     return app_home() / "logs"
 
 
@@ -59,6 +66,7 @@ def ensure_dirs() -> None:
 
 
 # Environment / settings ----------------------------------------------------
+
 
 def load_env() -> None:
     """Load ``.env`` from the app home and the current directory, if present."""
@@ -76,19 +84,21 @@ DEFAULTS: dict[str, Any] = {
 }
 
 # Cover-letter policy is read from searches.yaml (run config), not the env.
-COVER_LETTER_DEFAULT = "only_if_required"   # always | only_if_required | never
+COVER_LETTER_DEFAULT = "only_if_required"  # always | only_if_required | never
 
 
 def model() -> str:
+    """The configured LLM model identifier."""
     return os.environ.get("KRAVU_MODEL") or DEFAULTS["model"]
 
 
 def min_score() -> int:
+    """The minimum fit score for shortlisting, from env or the default."""
     raw = os.environ.get("KRAVU_MIN_SCORE")
     try:
-        return int(raw) if raw else DEFAULTS["min_score"]
+        return int(raw) if raw else int(DEFAULTS["min_score"])
     except ValueError:
-        return DEFAULTS["min_score"]
+        return int(DEFAULTS["min_score"])
 
 
 def has_llm_key() -> bool:
@@ -108,21 +118,22 @@ def has_llm_key() -> bool:
 
 # User files ----------------------------------------------------------------
 
-def load_profile() -> dict:
+
+def load_profile() -> dict[str, Any]:
     """Load ``profile.json``; raise a clear error if the user hasn't run init."""
     p = profile_path()
     if not p.exists():
-        raise FileNotFoundError(
-            f"No profile found at {p}. Run `kravu init` first."
-        )
-    return json.loads(p.read_text(encoding="utf-8"))
+        raise FileNotFoundError(f"No profile found at {p}. Run `kravu init` first.")
+    data: dict[str, Any] = json.loads(p.read_text(encoding="utf-8"))
+    return data
 
 
-def load_searches() -> dict:
+def load_searches() -> dict[str, Any]:
     """Load ``searches.yaml``; return an empty dict if absent."""
     import yaml
 
     p = searches_path()
     if not p.exists():
         return {}
-    return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    result: dict[str, Any] = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    return result

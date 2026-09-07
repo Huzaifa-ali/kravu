@@ -11,7 +11,7 @@ from enum import Enum
 from typing import Any
 
 
-class PipelinePhase(str, Enum):
+class PipelinePhase(str, Enum):  # noqa: UP042  # relies on str-Enum semantics, not StrEnum
     """The pipeline's use cases, in dependency order.
 
     Named phases identify each use case for orchestration and reporting. The word
@@ -26,7 +26,8 @@ class PipelinePhase(str, Enum):
     COVER = "cover"
 
     @classmethod
-    def order(cls) -> list["PipelinePhase"]:
+    def order(cls) -> list[PipelinePhase]:
+        """Return the phases in dependency order."""
         return [cls.EXPLORE, cls.EXPAND, cls.SCORE, cls.TAILOR, cls.COVER]
 
 
@@ -40,11 +41,16 @@ class ResumeFacts:
     out-of-set skill is claimed; the LLM judge catches subtler fabrication.
     """
 
-    raw_text: str = ""                       # the full original resume text (source of truth)
-    companies: list[str] = field(default_factory=list)   # employers that must be preserved
-    school: str = ""                         # education that must be preserved
-    metrics: list[str] = field(default_factory=list)     # real numbers/metrics — must not change
-    skills: list[str] = field(default_factory=list)      # the ONLY skills that may be claimed
+    # the full original resume text (source of truth)
+    raw_text: str = ""
+    # employers that must be preserved
+    companies: list[str] = field(default_factory=list)
+    # education that must be preserved
+    school: str = ""
+    # real numbers/metrics — must not change
+    metrics: list[str] = field(default_factory=list)
+    # the ONLY skills that may be claimed
+    skills: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -97,9 +103,9 @@ class Job:
     company: str = ""
     location: str = ""
     salary: str = ""
-    source: str = ""                 # which board it came from
-    apply_type: str = ""             # easy-apply | external | ats (for the Apply Agent)
-    description: str = ""            # short/preview description from discovery
+    source: str = ""  # which board it came from
+    apply_type: str = ""  # easy-apply | external | ats (for the Apply Agent)
+    description: str = ""  # short/preview description from discovery
     discovered_at: str | None = None
 
     # Enrichment
@@ -126,7 +132,8 @@ class Job:
     cover_attempts: int = 0
 
     # Apply (use case 6 — the Apply Agent)
-    apply_status: str | None = None      # applied | pending | failed | parked | in_progress
+    # applied | pending | failed | parked | in_progress
+    apply_status: str | None = None
     applied_at: str | None = None
     apply_error: str | None = None
     apply_attempts: int = 0
@@ -136,7 +143,7 @@ class Job:
 class ScoreResult:
     """Structured output of the ScoreJobFit use case for one job."""
 
-    score: int                       # 1-10
+    score: int  # 1-10
     reasoning: str
     matched_keywords: list[str] = field(default_factory=list)
     missing_skills: list[str] = field(default_factory=list)

@@ -103,8 +103,9 @@ def get_connection(path: Path | str | None = None) -> sqlite3.Connection:
 
     if not hasattr(_local, "connections"):
         _local.connections = {}
+    connections: dict[str, sqlite3.Connection] = _local.connections
 
-    conn = _local.connections.get(resolved)
+    conn = connections.get(resolved)
     if conn is not None:
         try:
             conn.execute("SELECT 1")
@@ -118,7 +119,7 @@ def get_connection(path: Path | str | None = None) -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout=10000")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.row_factory = sqlite3.Row
-    _local.connections[resolved] = conn
+    connections[resolved] = conn
     return conn
 
 
