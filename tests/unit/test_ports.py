@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import pytest
-
 from kravu.domain.ports import DiscoverySource, JobStore, LLMClient
 
 
-@pytest.mark.xfail(reason="JobRepository conformance completed in Task 3", strict=False)
 def test_job_repository_satisfies_job_store() -> None:
     from kravu.adapters.repository import JobRepository
 

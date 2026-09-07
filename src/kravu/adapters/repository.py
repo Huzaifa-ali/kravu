@@ -10,7 +10,7 @@ import sqlite3
 from datetime import UTC, datetime
 
 from kravu.adapters.db import get_connection
-from kravu.domain.models import Job
+from kravu.domain.models import Job, PipelinePhase
 
 # Columns that map 1:1 between the Job dataclass and the jobs table.
 _JOB_COLUMNS = (
@@ -263,3 +263,135 @@ class JobRepository:
             ),
             "cover": one("SELECT COUNT(*) FROM jobs WHERE cover_at IS NOT NULL"),
         }
+
+    # -- Apply (use case 6) -------------------------------------------------
+
+    def pending_apply(self, min_score: int, limit: int | None = None) -> list[Job]:
+        """Tailored, high-fit jobs not yet applied and under the attempt cap."""
+        sql = (
+            "SELECT * FROM jobs "
+            "WHERE tailored_resume_path IS NOT NULL "
+            "AND fit_score >= ? "
+            "AND (apply_status IS NULL OR apply_status IN ('failed', 'pending')) "
+            "AND COALESCE(apply_attempts, 0) < 3 "
+            "ORDER BY fit_score DESC"
+        )
+        if limit:
+            sql += f" LIMIT {int(limit)}"
+        return [_row_to_job(r) for r in self._conn.execute(sql, (min_score,))]
+
+    def set_apply_result(self, url: str, status: str, error: str | None) -> None:
+        """Record an apply outcome. ``status`` is applied|failed|parked|pending."""
+        applied_at = _now() if status == "applied" else None
+        self._conn.execute(
+            "UPDATE jobs SET apply_status = ?, applied_at = ?, apply_error = ? "
+            "WHERE url = ?",
+            (status, applied_at, (error or "")[:500] or None, url),
+        )
+        self._conn.commit()
+
+    def bump_apply_attempts(self, url: str) -> None:
+        """Increment the apply attempt counter for a job."""
+        self._conn.execute(
+            "UPDATE jobs SET apply_attempts = COALESCE(apply_attempts, 0) + 1 "
+            "WHERE url = ?",
+            (url,),
+        )
+        self._conn.commit()
+
+    def applied_today(self) -> int:
+        """Count submissions recorded today (UTC) — used for the daily cap."""
+        today = _now()[:10]
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM jobs "
+            "WHERE apply_status = 'applied' AND substr(applied_at, 1, 10) = ?",
+            (today,),
+        ).fetchone()
+        return int(row[0])
+
+    # -- Resume / status reporting -----------------------------------------
+
+    def reset_step_for_retry(self, phase: str) -> int:
+        """Clear a step's error/attempt state so its pending jobs re-run.
+
+        For ``expand`` this zeroes ``enrich_attempts`` and clears
+        ``enrich_error`` on jobs still lacking a ``full_description``. For the
+        LLM steps it zeroes the matching ``*_attempts`` counter on jobs that
+        have not produced their output yet. ``explore`` is a no-op (discovery is
+        re-run wholesale). Returns the number of rows reset.
+        """
+        resets: dict[str, str] = {
+            "expand": (
+                "UPDATE jobs SET enrich_attempts = 0, enrich_error = NULL "
+                "WHERE full_description IS NULL"
+            ),
+            "score": (
+                "UPDATE jobs SET fit_score = NULL, score_reasoning = NULL "
+                "WHERE fit_score IS NULL AND full_description IS NOT NULL"
+            ),
+            "tailor": (
+                "UPDATE jobs SET tailor_attempts = 0 WHERE tailored_resume_path IS NULL"
+            ),
+            "cover": (
+                "UPDATE jobs SET cover_attempts = 0 "
+                "WHERE cover_at IS NULL AND tailored_resume_path IS NOT NULL"
+            ),
+        }
+        sql = resets.get(phase)
+        if sql is None:
+            return 0
+        cursor = self._conn.execute(sql)
+        self._conn.commit()
+        return int(cursor.rowcount)
+
+    def step_counts(self, min_score: int) -> dict[str, dict[str, int]]:
+        """Per-phase done/pending counts for ``kravu status``.
+
+        Each phase reports how many jobs have completed it (``done``) and how
+        many are still eligible for it (``pending``). This tells the user which
+        step to ``resume``.
+        """
+        c = self._conn
+
+        def one(sql: str, params: tuple[object, ...] = ()) -> int:
+            return int(c.execute(sql, params).fetchone()[0])
+
+        total = one("SELECT COUNT(*) FROM jobs")
+        counts = {
+            PipelinePhase.EXPLORE.value: {"done": total, "pending": 0},
+            PipelinePhase.EXPAND.value: {
+                "done": one(
+                    "SELECT COUNT(*) FROM jobs WHERE full_description IS NOT NULL"
+                ),
+                "pending": one(
+                    "SELECT COUNT(*) FROM jobs WHERE full_description IS NULL "
+                    "AND COALESCE(enrich_attempts, 0) < 3"
+                ),
+            },
+            PipelinePhase.SCORE.value: {
+                "done": one("SELECT COUNT(*) FROM jobs WHERE fit_score IS NOT NULL"),
+                "pending": one(
+                    "SELECT COUNT(*) FROM jobs WHERE full_description IS NOT NULL "
+                    "AND fit_score IS NULL"
+                ),
+            },
+            PipelinePhase.TAILOR.value: {
+                "done": one(
+                    "SELECT COUNT(*) FROM jobs WHERE tailored_resume_path IS NOT NULL"
+                ),
+                "pending": one(
+                    "SELECT COUNT(*) FROM jobs WHERE fit_score >= ? "
+                    "AND tailored_resume_path IS NULL "
+                    "AND COALESCE(tailor_attempts, 0) < 5",
+                    (min_score,),
+                ),
+            },
+            PipelinePhase.COVER.value: {
+                "done": one("SELECT COUNT(*) FROM jobs WHERE cover_at IS NOT NULL"),
+                "pending": one(
+                    "SELECT COUNT(*) FROM jobs WHERE tailored_resume_path IS NOT NULL "
+                    "AND cover_at IS NULL AND COALESCE(cover_attempts, 0) < 5"
+                ),
+            },
+        }
+        return counts
