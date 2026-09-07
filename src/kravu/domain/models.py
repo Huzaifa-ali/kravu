@@ -123,6 +123,12 @@ class Job:
     cover_needed: bool | None = None
     cover_at: str | None = None
 
+    # Apply (use case 6 — the Apply Agent)
+    apply_status: str | None = None      # applied | pending | failed | parked | in_progress
+    applied_at: str | None = None
+    apply_error: str | None = None
+    apply_attempts: int = 0
+
 
 @dataclass(slots=True)
 class ScoreResult:

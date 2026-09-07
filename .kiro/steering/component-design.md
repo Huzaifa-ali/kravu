@@ -107,10 +107,21 @@ src/kravu/
 │   ├── repository.py      JobRepository  → implements JobStore. All SQL here.
 │   ├── llm.py             LiteLLMClient  → implements LLMClient. Provider-agnostic.
 │   ├── prompts.py         Prompt templates for score/tailor/cover. Low-slop, no fabrication.
-│   └── jobspy_source.py   JobSpy adapter → implements DiscoverySource.
+│   ├── jobspy_source.py   JobSpy adapter → implements DiscoverySource.
+│   ├── ats_source.py      ATS adapter (Greenhouse/Lever/Ashby) → implements DiscoverySource.
+│   └── playwright_page.py Playwright page renderer (used by ExpandJob).
+├── apply/                 Use case 6 — the Apply Agent (agentic, isolated).
+│   ├── __init__.py
+│   ├── agent.py           ApplyAgent: selects driver, runs it per job, records result.
+│   ├── gate.py            human-approval gate (default) | auto mode + daily cap.
+│   ├── mcp_server.py      launches/points to @playwright/mcp (shared by all drivers).
+│   └── drivers/
+│       ├── base.py        BrowserAgentDriver protocol.
+│       ├── kiro.py        Kiro driver (v0.1 default).
+│       ├── claude_code.py · codex.py · cursor.py · gemini.py  (additional drivers)
 └── entrypoints/
     ├── __init__.py
-    └── cli.py             Typer app: init / run / status. Wires adapters, calls pipeline, renders.
+    └── cli.py             Typer app: init / run / resume / apply / status.
 
 tests/
 ├── conftest.py            shared fixtures (temp DB, fakes)

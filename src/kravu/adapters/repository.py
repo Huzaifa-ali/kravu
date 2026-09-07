@@ -20,6 +20,7 @@ _JOB_COLUMNS = (
     "fit_score", "score_reasoning", "scored_at",
     "tailored_resume_path", "tailored_at",
     "cover_letter_path", "cover_needed", "cover_at",
+    "apply_status", "applied_at", "apply_error", "apply_attempts",
 )
 
 

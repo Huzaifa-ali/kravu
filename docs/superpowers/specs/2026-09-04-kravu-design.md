@@ -28,7 +28,8 @@ We use recognized software-architecture terms, not casual labels:
 - **Use Case** — one unit of business logic (Clean Architecture), named verb-noun:
   `ExploreJobs`, `ExpandJob`, `ScoreJobFit`, `TailorResume`, `DraftCoverLetter`.
 - **Pipeline (Orchestrator)** — sequences the use cases; holds no business rules.
-- **Apply Agent** — use case 6, a **Browser Agent** (autonomous, deferred phase).
+- **Apply Agent** — use case 6, a **Browser Agent** (autonomous; in scope for v0.1,
+  run via `kravu apply`).
 - **Agent Driver** — the swappable LLM/coding-agent that powers the Apply Agent
   (Strategy pattern).
 - **Repository** — the persistence contract (`JobStore` port); **Adapters** — the
@@ -40,14 +41,18 @@ We use recognized software-architecture terms, not casual labels:
 
 **Goals (v0.1)**
 - Turn a resume + a search into a ranked, tailored shortlist of good-fit jobs.
+- Full pipeline including the Apply Agent (use case 6): find → expand → score →
+  tailor → cover → apply (human-gated).
 - Zero-friction: value from a resume + one free-tier LLM key + one command.
-- Robust and low-risk: no browser automation, cannot get accounts banned.
+- Safe by design: never fabricates; auto-submit is opt-in behind a human gate;
+  respects platform limits (daily cap).
 - Provider-agnostic LLM; local SQLite storage.
 
 **Non-goals (v0.1)**
-- The Apply Agent (use case 6) — designed here but deferred to a later phase.
+- Streaming/concurrent pipeline execution (sequential only; streaming is a later
+  performance option).
 - Postgres, multi-user, or hosted/service deployment.
-- Harvesting private contact data or mass outreach.
+- Harvesting private contact data or mass/blind outreach.
 
 ## 4. The deterministic workflow vs. the agent (why the split)
 
@@ -63,7 +68,8 @@ as the Apply Agent, where variance is expected and contained.
 ## 5. Architecture
 
 CLI-fronted, database-coordinated deterministic **workflow** (use cases 1–5), with
-an isolated **agent** at use case 6 (deferred). Patterns: Pipes-and-Filters,
+an isolated **agent** at use case 6 (the Apply Agent, in scope for v0.1, run via
+`kravu apply`). Patterns: Pipes-and-Filters,
 Blackboard (the DB), Repository, Ports-and-Adapters (pragmatic hexagonal —
 business logic in `services/`, infrastructure behind injected ports). Standard
 Cosmic Python layout: `domain` / `services` / `adapters` / `entrypoints`. Full
@@ -286,23 +292,59 @@ regex-scraped from prose. Each contract lists: input, output, DB writes, failure
   company+title. **PDF rendering is v0.2** (per roadmap), so v0.1 output is
   review-and-send Markdown/text the user can convert or paste.
 
-## 8. Use case 6 — the Apply Agent (designed, deferred)
+## 7b. Pipeline orchestration
 
-Autonomous browser agent that fills and (optionally) submits an application form.
-Isolated because arbitrary web forms need open-ended reasoning. **Deferred to a
-later phase; not a v0.1 runtime dependency.** Design:
+The `Pipeline` (in `services/pipeline.py`) sequences the use cases. It holds **no
+business rules** — only ordering, failure handling, and reporting.
+
+- **Sequential (v0.1):** each use case runs to completion for all its outstanding
+  jobs before the next begins: ExploreJobs → ExpandJob → ScoreJobFit → TailorResume
+  → DraftCoverLetter. Concurrent/streaming execution is deferred (a later
+  performance option); sequential is simpler, deterministic, and easy to test.
+- **Partial-failure handling:**
+  - *Per-job* failures are recorded on the job's row and the pipeline continues to
+    the next job (never aborts) — as specified per use case in §7a.
+  - *Per-use-case* crashes (an unexpected exception in a whole step) are **caught,
+    logged, reported in the run summary, and the pipeline continues** to the next
+    use case. A run always produces whatever output it could.
+- **Idempotent / resumable:** every use case selects work purely by DB state
+  (`WHERE output IS NULL` / `attempts < cap`). So re-running never duplicates work
+  and always picks up outstanding items. This is the blackboard payoff.
+- **`run` vs `resume <step>`:**
+  - `kravu run` — full pipeline from ExploreJobs, advancing all outstanding work.
+  - `kravu resume <step>` — re-attempt the failed/pending jobs at `<step>`, **then
+    continue forward** through the remaining steps for jobs that advance. Backed by
+    the `*_attempts` counters and NULL-output markers already in the schema.
+- **Per-run caps:** LLM-spending steps (score/tailor/cover) honor a configurable
+  per-run cap (modest default, e.g. process top-N by fit_score) to control cost and
+  runtime — consistent with the co-pilot / not-a-blast principle.
+- **Reporting:** the orchestrator returns per-step counts (processed / done /
+  pending / failed), surfaced by `kravu status` so the user knows which step to
+  `resume`.
+
+## 8. Use case 6 — the Apply Agent (in scope for v0.1)
+
+Autonomous browser agent that fills and (with approval) submits an application
+form. Isolated because arbitrary web forms need open-ended reasoning — this is the
+one genuinely agentic component; use cases 1–5 remain a deterministic workflow.
+Invoked by the separate `kravu apply` command (not `run`), because it has
+irreversible real-world side effects. Design:
 
 - **Browser:** Playwright drives a real Chrome/Chromium.
 - **Tool protocol:** `@playwright/mcp` (Microsoft's Playwright MCP server) exposes
   browser actions (navigate, snapshot, click, type, upload) as MCP tools.
-- **Agent Driver (pluggable):** a coding agent drives the browser via its headless
-  CLI and manages its own memory/context. Verified invocations:
+- **Agent Driver (pluggable; Kiro is the v0.1 default):** a coding agent drives the
+  browser via its headless CLI and manages its own memory/context. The driver is a
+  Strategy behind a `BrowserAgentDriver` interface. **v0.1 ships the Kiro driver as
+  default and the pluggable interface**, with additional drivers supported/added
+  (Claude Code, Codex, Cursor, Gemini CLI). Verified invocations:
+  Kiro (`kiro --no-interactive`),
   Claude Code (`claude -p --mcp-config`, JSON config),
   Codex (`codex exec --json`, **TOML** config),
   Gemini CLI (`gemini -p --output-format json`),
-  Cursor (`cursor-agent -p --output-format stream-json --approve-mcps`),
-  Kiro (`kiro --no-interactive`). Config format differs per agent (Codex=TOML,
-  others=JSON) — encapsulated in each driver.
+  Cursor (`cursor-agent -p --output-format stream-json --approve-mcps`).
+  Config format differs per agent (Codex=TOML, others=JSON) — encapsulated in each
+  driver. Selected via config, e.g. `apply: { browser_agent: kiro }`.
 - **Result protocol:** the agent prints an agent-independent final line
   (`RESULT:APPLIED` / `RESULT:FAILED:<reason>` / `RESULT:CAPTCHA`), which the
   runner parses.
@@ -310,11 +352,19 @@ later phase; not a v0.1 runtime dependency.** Design:
   captures output, enforces timeout, records outcome + attempts to the DB.
 - **Safety:** **human-approval gate is the default** (prepare + queue; user
   approves before submit). Auto-submit is opt-in.
-- **Memory:** delegated to the driving agent. kravu builds no working-memory layer.
-- **Open item — apply-site targeting:** *which* sites/ATSes the Apply Agent submits
-  to (e.g. Workday portals, direct career pages, greenhouse/lever), how to classify
-  manual-only ATSes, and which to block, is an open design question to be settled
-  when this phase is built. This is distinct from discovery `sites` (§13a).
+- **Memory:** delegated to the driving agent (Kiro/Claude Code/etc. manage their
+  own context). kravu builds no working-memory layer.
+- **Apply-mode config:** `apply: { mode: human_gate (default) | auto,
+  browser_agent: kiro, daily_cap: <N> }`. The daily cap limits submissions per day
+  (spam-flag protection). `mode: auto` still respects the cap and skips anything
+  with a CAPTCHA / login wall / required custom question (parked, never fabricated).
+- **Apply routing (uses `apply_type` from discovery):** easy-apply / external / ATS
+  jobs are routed to the appropriate handling. Jobs behind login walls, CAPTCHAs, or
+  requiring custom free-text answers are **parked for manual handling**, never
+  auto-answered with fabricated content (consistent with the zero-fabrication
+  principle). Which specific ATSes/portals are fully supported vs. parked in v0.1 is
+  finalized in the implementation plan; the routing mechanism (via `apply_type`) is
+  fixed here.
 
 ## 9. LLM usage, providers & memory
 
@@ -361,8 +411,9 @@ ranges (`>=x,<next-major`); `uv.lock` captures exact resolved versions.
 
 **Dev/tooling:** `pytest` 9.1.1, `ruff` 0.16.6, `mypy` 2.3.1.
 **Build backend:** `hatchling` 1.32.0.
-**Deferred (use case 6, later phase):** Playwright + `@playwright/mcp` (npx) + the
-chosen agent CLI — not in v0.1 `dependencies`.
+**Apply Agent (use case 6, v0.1):** `@playwright/mcp` (run via `npx`, not a pip dep)
++ the user's chosen coding-agent CLI (Kiro by default). Playwright itself is already
+a pip dep (also used by ExpandJob).
 
 **`pyproject.toml` shape (PEP 621, src-layout):**
 
@@ -420,8 +471,21 @@ keys. Local Ollama providers need no key. `.env.example` documents this.
 
 **Commands:**
 - `kravu init` — one-time setup wizard (details below).
-- `kravu run [phases...]` — run the workflow (default: all use cases 1–5).
-- `kravu status` — pipeline stats + ranked shortlist.
+- `kravu run` — run the full pipeline (use cases 1–5) from the start, processing all
+  outstanding work. Idempotent/resumable: safe to run repeatedly; only advances what
+  still needs advancing (blackboard state).
+- `kravu resume <step>` — re-attempt the jobs that failed/are pending at `<step>`
+  (`explore`|`expand`|`score`|`tailor`|`cover`), **then continue forward** through
+  the remaining steps for the jobs that advance. Uses the DB retry state
+  (`*_attempts` counters, NULL-output markers). Example: `kravu resume expand`
+  retries pending enrichment, then flows newly-enriched jobs on to score → tailor →
+  cover.
+- `kravu apply` — the Apply Agent (use case 6): drives the browser to submit ready
+  applications. **Human-approval gate by default** (auto-submit opt-in). Separate
+  from `run` because it has irreversible real-world side effects. See §8.
+- `kravu status` — pipeline stats + ranked shortlist. Shows **per-step counts**
+  including how many jobs are done / pending / failed at each step, so the user
+  knows which step to `resume`.
 
 **`kravu init` flow:**
 
@@ -528,9 +592,9 @@ searches:                      # keywords — the PRIMARY user input (drives Job
 
 ## 15. Roadmap (post-v0.1)
 
-- v0.2: PDF rendering of materials; richer `status`.
-- v0.3+: the Apply Agent (use case 6) — Playwright MCP + pluggable Agent Driver
-  (one agent first), human-approval gate by default.
+- v0.2: PDF rendering of materials; richer `status`; more Agent Drivers beyond the
+  default; broader ATS apply support.
+- v0.3+: streaming/concurrent pipeline execution; scheduled/continuous runs.
 
 ## 16. Note on already-written code
 

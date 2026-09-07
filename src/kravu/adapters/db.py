@@ -56,7 +56,13 @@ CREATE TABLE IF NOT EXISTS jobs (
     cover_letter_path     TEXT,
     cover_needed          INTEGER,
     cover_at              TEXT,
-    cover_attempts        INTEGER DEFAULT 0
+    cover_attempts        INTEGER DEFAULT 0,
+
+    -- Apply (use case 6 — the Apply Agent)
+    apply_status          TEXT,
+    applied_at            TEXT,
+    apply_error           TEXT,
+    apply_attempts        INTEGER DEFAULT 0
 )
 """
 
