@@ -259,7 +259,7 @@ regex-scraped from prose. Each contract lists: input, output, DB writes, failure
   for added "learnable" skills) — the honesty line the 2026 research supports.
 
 ### DraftCoverLetter  (conditional — user policy)
-- **Input:** `Profile` + `full_description` + the tailored resume (or base resume).
+- **Input:** `Profile` + `full_description` + the tailored resume.
 - **Who decides "needed" — a user policy** in config: `cover_letter: always |
   only_if_required | never` (default `only_if_required`). kravu never uses an LLM
   to *decide* whether one is needed — code decides, the LLM only *writes*:
@@ -316,8 +316,10 @@ business rules** — only ordering, failure handling, and reporting.
     continue forward** through the remaining steps for jobs that advance. Backed by
     the `*_attempts` counters and NULL-output markers already in the schema.
 - **Per-run caps:** LLM-spending steps (score/tailor/cover) honor a configurable
-  per-run cap (modest default, e.g. process top-N by fit_score) to control cost and
-  runtime — consistent with the co-pilot / not-a-blast principle.
+  per-run cap (`defaults.per_run_cap` in `searches.yaml`; modest default of 25 —
+  process top-N by fit_score) to control cost and runtime — consistent with the
+  co-pilot / not-a-blast principle. It lives in `searches.yaml` `defaults`
+  alongside the other run knobs (`results_wanted`, `min_score`), not the env.
 - **Reporting:** the orchestrator returns per-step counts (processed / done /
   pending / failed), surfaced by `kravu status` so the user knows which step to
   `resume`.
@@ -538,6 +540,7 @@ defaults:                      # merged into every JobSpy search unless overridd
   results_wanted: 25
   hours_old: 168               # last 7 days
   description_format: markdown
+  per_run_cap: 25              # max jobs each LLM step (score/tailor/cover) processes per run
 
 cover_letter: only_if_required # always | only_if_required (default) | never
 min_score: 7                   # fit threshold to proceed to tailoring

@@ -117,11 +117,13 @@ class Job:
     # Tailoring
     tailored_resume_path: str | None = None
     tailored_at: str | None = None
+    tailor_attempts: int = 0
 
     # Cover letter
     cover_letter_path: str | None = None
     cover_needed: bool | None = None
     cover_at: str | None = None
+    cover_attempts: int = 0
 
     # Apply (use case 6 — the Apply Agent)
     apply_status: str | None = None      # applied | pending | failed | parked | in_progress
