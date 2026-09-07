@@ -132,7 +132,7 @@ class Job:
     cover_attempts: int = 0
 
     # Apply (use case 6 — the Apply Agent)
-    # applied | pending | failed | parked | in_progress
+    # applied | pending | failed | parked
     apply_status: str | None = None
     applied_at: str | None = None
     apply_error: str | None = None

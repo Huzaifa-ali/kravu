@@ -15,6 +15,7 @@ from kravu import config
 from kravu.adapters import prompts
 from kravu.domain.models import Job, Profile
 from kravu.domain.ports import JobStore, LLMClient
+from kravu.services.tailor_validate import SKILL_WATCHLIST
 
 _MAX_ATTEMPTS = 5
 _WORD_CAP = 250
@@ -100,4 +101,11 @@ class DraftCoverLetter:
         if len(letter.split()) > _WORD_CAP:
             return False
         lowered = letter.lower()
-        return not any(phrase.lower() in lowered for phrase in prompts.BANNED_WORDS)
+        if any(phrase.lower() in lowered for phrase in prompts.BANNED_WORDS):
+            return False
+        # Zero fabrication: reject any watchlist skill not in the user's facts
+        # (same deterministic guard TailorResume applies).
+        allowed = {s.lower() for s in self._profile.resume_facts.skills}
+        return not any(
+            skill in lowered and skill not in allowed for skill in SKILL_WATCHLIST
+        )

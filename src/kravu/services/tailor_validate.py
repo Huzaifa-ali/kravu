@@ -14,7 +14,8 @@ from kravu.adapters.prompts import BANNED_WORDS
 from kravu.domain.models import ResumeFacts
 
 # Common skills to catch if fabricated (claimed but not in ResumeFacts.skills).
-_SKILL_WATCHLIST = (
+# Public so DraftCoverLetter can apply the same out-of-set-skill guard.
+SKILL_WATCHLIST = (
     "python",
     "java",
     "javascript",
@@ -82,7 +83,7 @@ def validate_no_fabrication(resume: str, facts: ResumeFacts) -> list[str]:
         if metric and metric.lower() not in lowered:
             issues.append(f"Missing/altered required metric: {metric}")
 
-    for skill in _SKILL_WATCHLIST:
+    for skill in SKILL_WATCHLIST:
         index = lowered.find(skill)
         if index != -1 and skill not in allowed:
             # Report the skill as it appears in the resume (preserves casing).

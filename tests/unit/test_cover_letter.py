@@ -77,3 +77,27 @@ def test_always_policy_writes_even_without_signal(
     )
     job = repo.get("https://a.test/3")
     assert job is not None and job.cover_needed is True
+
+
+_FABRICATED_LETTER = (
+    "Dear Hiring Manager,\n\n"
+    "I built production systems in Python and Kubernetes at Acme that cut "
+    "latency. It maps to your reliability needs.\n\n"
+    "I would bring that focus to your team.\n\nBest, Jane"
+)
+
+
+def test_cover_letter_rejects_out_of_set_skill(
+    repo: JobRepository, kravu_home: Path
+) -> None:
+    # The profile only has Python; a letter claiming Kubernetes must be rejected
+    # by the deterministic skill-watchlist guard, so no path is written.
+    _tailored_job(repo, "https://a.test/4", "no signal here")
+    DraftCoverLetter(
+        _FakeLLM(_FABRICATED_LETTER), _profile(), policy="always", min_score=7
+    ).run(repo)
+    job = repo.get("https://a.test/4")
+    assert job is not None
+    assert job.cover_needed is True
+    assert job.cover_letter_path is None
+    assert job.cover_attempts >= 1
