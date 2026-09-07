@@ -11,9 +11,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from kravu.domain.ports import JobStore
+
 
 class _UseCase(Protocol):
-    def run(self, store: object, limit: int | None = None) -> None: ...
+    def run(self, store: JobStore, limit: int | None = None) -> None: ...
 
 
 @dataclass(slots=True)
@@ -33,7 +35,7 @@ class Pipeline:
         self._steps = steps
         self._per_run_cap = per_run_cap
 
-    def run(self, store: object) -> dict[str, str]:
+    def run(self, store: JobStore) -> dict[str, str]:
         """Run every step in order and return a per-step status summary.
 
         Each value is ``"ok"`` on success or an error string if that step
