@@ -11,23 +11,11 @@ from __future__ import annotations
 from typing import Any
 
 from kravu.adapters import prompts
+from kravu.adapters.jobspy_source import DEFAULT_SITES, SUPPORTED_SITES
 from kravu.adapters.llm import parse_json
 from kravu.domain.models import Profile
 from kravu.domain.ports import LLMClient
 from kravu.exceptions import SearchesConfigError
-
-_ALLOWED_SITES = frozenset(
-    {
-        "indeed",
-        "linkedin",
-        "zip_recruiter",
-        "google",
-        "glassdoor",
-        "bayt",
-        "bdjobs",
-        "naukri",
-    }
-)
 
 
 def _default_searches() -> dict[str, Any]:
@@ -35,7 +23,9 @@ def _default_searches() -> dict[str, Any]:
         "sources": {
             "jobspy": {
                 "enabled": True,
-                "sites": ["indeed", "linkedin", "zip_recruiter", "google"],
+                # Default to the reliable boards; the rest of SUPPORTED_SITES can
+                # be added by hand in searches.yaml when wanted.
+                "sites": list(DEFAULT_SITES),
             },
             "ats": {"enabled": False, "companies": []},
         },
@@ -92,9 +82,9 @@ def validate_searches(searches: dict[str, Any]) -> None:
 
     sites = jobspy.get("sites", []) if jobspy.get("enabled") else []
     for site in sites:
-        if site not in _ALLOWED_SITES:
+        if site not in SUPPORTED_SITES:
             raise SearchesConfigError(
-                f"Unknown site '{site}'. Allowed: {sorted(_ALLOWED_SITES)}."
+                f"Unknown site '{site}'. Allowed: {sorted(SUPPORTED_SITES)}."
             )
 
     needs_country = bool({"indeed", "glassdoor"} & set(sites))

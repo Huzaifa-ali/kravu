@@ -1,26 +1,33 @@
 """AtsSource: company-driven discovery via public ATS JSON boards.
 
-Supports Greenhouse, Lever, and Ashby — all serve open JSON with no key. A wrong
-slug returns HTTP 200 with an empty list (not 404), so "empty" is a real,
-reportable outcome recorded in ``notes``, never a crash. Lever's ``createdAt`` is
-epoch-milliseconds while Greenhouse/Ashby use ISO-8601; only the URL/title/location
-are mapped here, so timestamp shape does not break mapping (spec §7a).
+Supports Greenhouse, Lever, Ashby, Workable, and Workday — all expose open JSON
+with no API key. Greenhouse/Lever/Ashby/Workable are simple GETs; Workday uses a
+per-tenant CXS endpoint reached with a POST body. A wrong slug/URL returns an
+empty list (or a recorded failure), never a crash: each company's outcome is
+noted and the run continues (spec §7a).
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import urlparse
 
 from kravu.domain.models import Job
 
-Fetcher = Callable[[str], Any]
+# A fetcher maps a URL (and optional JSON body, for POST endpoints like Workday)
+# to parsed JSON. Tests inject a stub so the suite stays offline.
+Fetcher = Callable[..., Any]
 
 
-def _default_fetch(url: str) -> Any:
+def _default_fetch(url: str, body: Any = None) -> Any:
+    """GET the URL, or POST ``body`` as JSON when a body is supplied."""
     import httpx
 
-    response = httpx.get(url, timeout=20.0)
+    if body is None:
+        response = httpx.get(url, timeout=20.0)
+    else:
+        response = httpx.post(url, json=body, timeout=20.0)
     response.raise_for_status()
     return response.json()
 
@@ -34,8 +41,9 @@ class AtsSource:
         """Build the adapter.
 
         Args:
-            fetch: Function mapping a URL to parsed JSON. Defaults to an httpx
-                GET; tests inject a stub so the suite stays offline.
+            fetch: Function mapping ``(url, body=None)`` to parsed JSON. Defaults
+                to an httpx GET/POST; tests inject a stub so the suite stays
+                offline.
         """
         self._fetch = fetch or _default_fetch
         self.notes: dict[str, str] = {}
@@ -47,10 +55,18 @@ class AtsSource:
             return []
         jobs: list[Job] = []
         for company in config.get("companies", []):
-            jobs.extend(self._pull(company.get("ats", ""), company.get("slug", "")))
+            jobs.extend(self._pull(company))
         return jobs
 
-    def _pull(self, ats: str, slug: str) -> list[Job]:
+    def _pull(self, company: dict[str, Any]) -> list[Job]:
+        """Fetch one company's board, mapping by ATS type; never raises."""
+        ats = str(company.get("ats", ""))
+        if ats == "workday":
+            return self._pull_workday(company)
+        return self._pull_simple(ats, str(company.get("slug", "")))
+
+    def _pull_simple(self, ats: str, slug: str) -> list[Job]:
+        """GET-based ATS boards keyed by a company slug."""
         key = f"{ats}:{slug}"
         url = self._board_url(ats, slug)
         if url is None:
@@ -62,8 +78,35 @@ class AtsSource:
         except Exception as exc:  # noqa: BLE001 - record and continue per spec
             self.notes[key] = f"failed: {exc}"
             return []
-        if not jobs:
-            self.notes[key] = "empty"
+        self.notes[key] = f"ok: {len(jobs)}" if jobs else "empty"
+        return jobs
+
+    def _pull_workday(self, company: dict[str, Any]) -> list[Job]:
+        """POST to a Workday tenant's CXS endpoint and map the postings.
+
+        The company config gives a careers-site ``url`` such as
+        ``https://{tenant}.{dc}.myworkdayjobs.com/{lang}/{site}``; tenant, data
+        center and site are parsed from it to build the CXS jobs endpoint.
+        """
+        careers_url = str(company.get("url", ""))
+        parsed = _parse_workday_url(careers_url)
+        if parsed is None:
+            self.notes[f"workday:{careers_url or '?'}"] = (
+                "invalid workday url (expected "
+                "https://<tenant>.<dc>.myworkdayjobs.com/<lang>/<site>)"
+            )
+            return []
+        tenant, host, site = parsed
+        key = f"workday:{tenant}/{site}"
+        cxs = f"https://{host}/wday/cxs/{tenant}/{site}/jobs"
+        body = {"appliedFacets": {}, "limit": 20, "offset": 0, "searchText": ""}
+        try:
+            payload = self._fetch(cxs, body)
+            jobs = self._map_workday(careers_url, key, payload)
+        except Exception as exc:  # noqa: BLE001 - record and continue per spec
+            self.notes[key] = f"failed: {exc}"
+            return []
+        self.notes[key] = f"ok: {len(jobs)}" if jobs else "empty"
         return jobs
 
     @staticmethod
@@ -74,6 +117,8 @@ class AtsSource:
             return f"https://api.lever.co/v0/postings/{slug}?mode=json"
         if ats == "ashby":
             return f"https://api.ashbyhq.com/posting-api/job-board/{slug}"
+        if ats == "workable":
+            return f"https://apply.workable.com/api/v1/widget/accounts/{slug}"
         return None
 
     def _map(self, ats: str, slug: str, payload: Any) -> list[Job]:
@@ -117,4 +162,61 @@ class AtsSource:
                 for j in payload.get("jobs", [])
                 if j.get("jobUrl")
             ]
+        if ats == "workable":
+            return [
+                Job(
+                    url=str(j["url"]),
+                    title=str(j.get("title") or ""),
+                    company=slug,
+                    location=_workable_location(j),
+                    source=source,
+                    apply_type="ats",
+                )
+                for j in payload.get("jobs", [])
+                if j.get("url")
+            ]
         return []
+
+    def _map_workday(self, careers_url: str, source: str, payload: Any) -> list[Job]:
+        base = careers_url.rstrip("/")
+        jobs: list[Job] = []
+        for posting in payload.get("jobPostings", []):
+            external_path = posting.get("externalPath")
+            if not external_path:
+                continue
+            jobs.append(
+                Job(
+                    url=f"{base}{external_path}",
+                    title=str(posting.get("title") or ""),
+                    company=source.split(":", 1)[-1].split("/", 1)[0],
+                    location=str(posting.get("locationsText") or ""),
+                    source=source,
+                    apply_type="ats",
+                )
+            )
+        return jobs
+
+
+def _workable_location(job: dict[str, Any]) -> str:
+    """Join a Workable posting's city/state/country into one label."""
+    parts = [str(job.get(k) or "") for k in ("city", "state", "country")]
+    return ", ".join(p for p in parts if p)
+
+
+def _parse_workday_url(careers_url: str) -> tuple[str, str, str] | None:
+    """Parse a Workday careers URL into ``(tenant, host, site)``.
+
+    Expects ``https://<tenant>.<dc>.myworkdayjobs.com/<lang>/<site>``. The site is
+    the final non-empty path segment; the tenant is the first host label. Returns
+    ``None`` when the URL is not a recognizable Workday careers URL.
+    """
+    parsed = urlparse(careers_url)
+    host = parsed.netloc.lower()
+    if "myworkdayjobs.com" not in host:
+        return None
+    tenant = host.split(".", 1)[0]
+    segments = [seg for seg in parsed.path.split("/") if seg]
+    if not tenant or not segments:
+        return None
+    site = segments[-1]
+    return tenant, host, site

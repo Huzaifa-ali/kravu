@@ -21,7 +21,13 @@ from kravu.apply.drivers.cursor import CursorDriver
 from kravu.apply.drivers.gemini import GeminiDriver
 from kravu.apply.drivers.kiro import KiroDriver
 from kravu.domain.models import Profile
-from kravu.domain.ports import DiscoverySource, JobStore, LLMClient
+from kravu.domain.ports import (
+    NO_PROGRESS,
+    DiscoverySource,
+    JobStore,
+    LLMClient,
+    ProgressReporter,
+)
 from kravu.services.cover_letter import DraftCoverLetter
 from kravu.services.expand import ExpandJob, PageRenderer
 from kravu.services.explore import ExploreJobs
@@ -50,9 +56,15 @@ class _ExploreStep:
         self._explore = explore
         self._searches = searches
 
-    def run(self, store: JobStore, limit: int | None = None) -> None:
+    def run(
+        self,
+        store: JobStore,
+        limit: int | None = None,
+        *,
+        progress: ProgressReporter = NO_PROGRESS,
+    ) -> None:
         """Run discovery with the captured searches (``limit`` unused)."""
-        self._explore.run(store, self._searches)
+        self._explore.run(store, self._searches, progress=progress)
 
 
 def build_pipeline_steps(

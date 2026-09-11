@@ -92,9 +92,9 @@ uv run kravu status    # per-step counts + your ranked shortlist
 
 ## Configuration
 
-- **Model** — set `KRAVU_MODEL` (e.g. `gemini/gemma-4-31b`, `ollama/qwen3.5:4b`,
-  `anthropic/claude-sonnet-5`, `gpt-6-astra`). Passed straight to LiteLLM; override
-  freely. See [`.env.example`](.env.example).
+- **Model** — set `KRAVU_MODEL` (e.g. `gemini/gemma-4-26b-a4b-it`,
+  `ollama/qwen3.5:4b`, `anthropic/claude-sonnet-5`, `gpt-6-astra`). Passed straight
+  to LiteLLM; override freely. See [`.env.example`](.env.example).
 - **Provider key** — set the variable your model needs (`GEMINI_API_KEY`,
   `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …). Local Ollama models need no key.
 - **Searches** — `~/.kravu/searches.yaml` (created by `kravu init`) defines your

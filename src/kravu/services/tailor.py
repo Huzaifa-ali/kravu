@@ -17,7 +17,7 @@ from kravu import config
 from kravu.adapters import prompts
 from kravu.adapters.llm import parse_json
 from kravu.domain.models import Job, Profile
-from kravu.domain.ports import JobStore, LLMClient
+from kravu.domain.ports import NO_PROGRESS, JobStore, LLMClient, ProgressReporter
 from kravu.exceptions import LLMResponseError
 from kravu.services.tailor_validate import validate_no_fabrication
 
@@ -38,11 +38,21 @@ class TailorResume:
         self._profile = profile
         self._min_score = min_score
 
-    def run(self, store: JobStore, limit: int | None = None) -> None:
+    def run(
+        self,
+        store: JobStore,
+        limit: int | None = None,
+        *,
+        progress: ProgressReporter = NO_PROGRESS,
+    ) -> None:
         """Tailor every pending high-fit job (up to ``limit``). Never raises."""
         config.ensure_dirs()
-        for job in store.pending_tailoring(self._min_score, limit):
+        jobs = store.pending_tailoring(self._min_score, limit)
+        progress.start_step("tailor", len(jobs))
+        for job in jobs:
             self._tailor_one(store, job)
+            progress.advance("tailor", job.company)
+        progress.finish_step("tailor")
 
     def _tailor_one(self, store: JobStore, job: Job) -> None:
         prompt = prompts.tailor_prompt(

@@ -1,8 +1,10 @@
 """JobSpySource: keyword-driven discovery via python-jobspy.
 
 Runs each configured search across the enabled sites and returns ``Job`` rows
-with the discovery fields populated. A failing site is recorded in ``notes`` and
-skipped — a bad source never aborts the run (spec §7a). ``jobspy`` is imported
+with the discovery fields populated. Each site is scraped in its own call so a
+single blocked or erroring board (a 403/429, an empty page) never zeroes out the
+others — one bad source records a note and is skipped, and the run continues
+(spec §7a / principles: a failure is recorded, not fatal). ``jobspy`` is imported
 lazily so importing this module has no heavy side effects.
 """
 
@@ -11,6 +13,31 @@ from __future__ import annotations
 from typing import Any
 
 from kravu.domain.models import Job
+
+# Every board the stock ``python-jobspy`` can scrape and that works on the pinned
+# version. ``bdjobs`` is intentionally excluded: python-jobspy 1.1.82 crashes its
+# BDJobs scraper (``__init__() got an unexpected keyword argument 'user_agent'``),
+# so it can never return results on this version. Source: JobSpy README
+# (speedyapply/JobSpy). A site name outside this set is a config typo and is
+# reported in ``notes`` rather than passed through to JobSpy.
+SUPPORTED_SITES: frozenset[str] = frozenset(
+    {
+        "linkedin",
+        "indeed",
+        "glassdoor",
+        "google",
+        "zip_recruiter",
+        "bayt",
+        "naukri",
+    }
+)
+
+# The boards enabled by default on a fresh setup. Kept lean to the two that are
+# reliable from a single residential IP without proxies (Indeed has no rate
+# limiting; LinkedIn works for modest volume). The rest of SUPPORTED_SITES stay
+# valid to enable in searches.yaml, but they frequently 403/empty per-IP, so they
+# are opt-in rather than default noise.
+DEFAULT_SITES: tuple[str, ...] = ("indeed", "linkedin")
 
 # Per-JobSpy-search fields passed straight through to scrape_jobs().
 _PASSTHROUGH = (
@@ -28,23 +55,24 @@ _PASSTHROUGH = (
 
 
 class JobSpySource:
-    """DiscoverySource backed by python-jobspy."""
+    """DiscoverySource backed by python-jobspy, one call per site."""
 
     name = "jobspy"
 
     def __init__(self) -> None:
-        """Initialize with an empty per-search notes map."""
-        self.notes: dict[str, str] = {}
+        """Initialize with an empty per-(search, site) notes map."""
+        self.notes: dict[tuple[str, str], str] = {}
 
     def discover(self, searches: dict[str, Any]) -> list[Job]:
-        """Run every configured search and return discovered jobs.
+        """Run every configured search across every site and return jobs.
 
         Args:
             searches: The parsed ``searches.yaml`` dict.
 
         Returns:
             A flat list of ``Job`` rows (discovery fields only). Duplicates are
-            NOT removed here — ExploreJobs dedupes by normalized URL.
+            NOT removed here — ExploreJobs dedupes by normalized URL. Per-(search,
+            site) outcomes are recorded in ``self.notes``.
         """
         config = searches.get("sources", {}).get("jobspy", {})
         if not config.get("enabled", True):
@@ -53,31 +81,38 @@ class JobSpySource:
         defaults = searches.get("defaults", {})
         jobs: list[Job] = []
         for entry in searches.get("searches", []):
-            jobs.extend(self._run_one(entry, sites, defaults))
+            for site in sites:
+                jobs.extend(self._run_one_site(entry, site, defaults))
         return jobs
 
-    def _run_one(
-        self, entry: dict[str, Any], sites: list[str], defaults: dict[str, Any]
+    def _run_one_site(
+        self, entry: dict[str, Any], site: str, defaults: dict[str, Any]
     ) -> list[Job]:
+        """Scrape a single site for one search; record the outcome, never raise."""
+        name = str(entry.get("name", entry.get("search_term", "search")))
+        key = (name, site)
+        if site not in SUPPORTED_SITES:
+            self.notes[key] = (
+                f"unsupported site (choose from {', '.join(sorted(SUPPORTED_SITES))})"
+            )
+            return []
+
         import jobspy  # type: ignore[import-untyped]  # no stubs shipped
 
-        name = str(entry.get("name", entry.get("search_term", "search")))
-        kwargs: dict[str, Any] = {"site_name": sites}
-        for key in _PASSTHROUGH:
-            if key in defaults:
-                kwargs[key] = defaults[key]
-        for key in _PASSTHROUGH:
-            if key in entry:
-                kwargs[key] = entry[key]
+        kwargs: dict[str, Any] = {"site_name": [site]}
+        for source in (defaults, entry):
+            for field in _PASSTHROUGH:
+                if field in source:
+                    kwargs[field] = source[field]
         try:
             frame = jobspy.scrape_jobs(**kwargs)
         except Exception as exc:  # noqa: BLE001 - record and continue per spec
-            self.notes[name] = f"failed: {exc}"
+            self.notes[key] = f"failed: {exc}"
             return []
         records = frame.to_dict("records") if frame is not None else []
-        if not records:
-            self.notes[name] = "empty"
-        return [self._to_job(r) for r in records if r.get("job_url")]
+        jobs = [self._to_job(r) for r in records if r.get("job_url")]
+        self.notes[key] = f"ok: {len(jobs)}" if jobs else "empty"
+        return jobs
 
     @staticmethod
     def _to_job(record: dict[str, Any]) -> Job:

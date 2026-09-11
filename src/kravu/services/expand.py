@@ -14,7 +14,7 @@ import json
 from typing import Protocol
 
 from kravu.adapters import prompts
-from kravu.domain.ports import JobStore, LLMClient
+from kravu.domain.ports import NO_PROGRESS, JobStore, LLMClient, ProgressReporter
 
 _MAX_ATTEMPTS = 3
 _MIN_EXTRACT_LEN = 200
@@ -86,10 +86,20 @@ class ExpandJob:
         self._renderer = renderer
         self._llm = llm
 
-    def run(self, store: JobStore, limit: int | None = None) -> None:
+    def run(
+        self,
+        store: JobStore,
+        limit: int | None = None,
+        *,
+        progress: ProgressReporter = NO_PROGRESS,
+    ) -> None:
         """Enrich every pending job (up to ``limit``). Never raises per job."""
-        for job in store.pending_enrichment(limit):
+        jobs = store.pending_enrichment(limit)
+        progress.start_step("expand", len(jobs))
+        for job in jobs:
             self._expand_one(store, job.url)
+            progress.advance("expand", job.company)
+        progress.finish_step("expand")
 
     def _expand_one(self, store: JobStore, url: str) -> None:
         store.bump_enrich_attempts(url)

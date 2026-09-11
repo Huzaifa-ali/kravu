@@ -94,7 +94,7 @@ def test_discover_skips_failing_site_without_raising(
     }
     jobs = source.discover(searches)
     assert jobs == []
-    assert "d" in source.notes
+    assert ("d", "indeed") in source.notes
 
 
 def test_name_attribute() -> None:

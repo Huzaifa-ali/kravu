@@ -36,6 +36,20 @@ def test_suggest_builds_valid_searches_dict() -> None:
     validate_searches(result)
 
 
+def test_suggest_defaults_to_reliable_boards() -> None:
+    """A fresh setup enables the reliable boards by default (indeed + linkedin)."""
+    from kravu.adapters.jobspy_source import DEFAULT_SITES, SUPPORTED_SITES
+
+    reply = '{"search_term": "x", "location": "NYC", "is_remote": true}'
+    result = SuggestSearches(_FakeLLM(reply)).run(_profile())
+
+    assert set(result["sources"]["jobspy"]["sites"]) == set(DEFAULT_SITES)
+    assert DEFAULT_SITES == ("indeed", "linkedin")
+    # Default must be a subset of what's actually supported.
+    assert set(DEFAULT_SITES) <= set(SUPPORTED_SITES)
+    validate_searches(result)
+
+
 def test_validate_requires_country_indeed_when_indeed_site() -> None:
     bad = {
         "sources": {"jobspy": {"enabled": True, "sites": ["indeed"]}},
