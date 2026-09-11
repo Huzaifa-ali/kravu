@@ -95,26 +95,37 @@ case `items` is a `list[Job]`.
 ### 4.2 Use-case adoption
 
 Each per-job use case replaces its `for job in jobs:` loop with a call to
-`run_parallel`, passing its existing `_..._one` method as `work` and
-`progress.advance` as `on_done`. The per-job methods (`_score_one`,
-`_expand_one`, `_tailor_one`, `_process_one`) are **unchanged** — only the
-iteration changes. Each use case gains a `workers: int` constructor argument
-(injected at composition, defaulting to serial-safe behaviour).
+`run_parallel`, passing a `work` closure that calls its existing `_..._one` method
+(with a per-thread store from the factory — §4.5) and `progress.advance` as
+`on_done`. The per-job methods (`_score_one`, `_expand_one`, `_tailor_one`,
+`_process_one`) are **unchanged** — only the iteration and the store they write
+through change. Each use case gains two keyword-only constructor arguments,
+`workers` and `store_factory` (injected at composition; see the note after the
+example for their defaults).
 
 Example (`score`):
 
 ```python
 def run(self, store, limit=None, *, progress=NO_PROGRESS):
-    jobs = store.pending_scoring(limit)
+    jobs = store.pending_scoring(limit)          # main-thread read
     progress.start_step("score", len(jobs))
     run_parallel(
         jobs,
-        lambda job: self._score_one(store, job.url, job.full_description or ""),
+        lambda job: self._score_one(
+            self._store_factory(),               # this worker thread's own store
+            job.url, job.full_description or "",
+        ),
         workers=self._workers,
         on_done=lambda job: progress.advance("score", job.company),
     )
     progress.finish_step("score")
 ```
+
+The `workers` and `store_factory` arguments are **keyword-only with defaults**
+(`workers: int = 1`, `store_factory: StoreFactory | None = None`) so existing
+tests and the composition root that construct these use cases positionally keep
+working; when the factory is absent the use case falls back to the passed-in
+`store` and runs serially (`workers=1`), i.e. exactly today's behaviour.
 
 ### 4.3 Thread-safe progress
 
@@ -134,24 +145,73 @@ an entrypoint-layer concern; the domain `ProgressReporter` protocol is unchanged
 - This is a concurrency setting, not a provider setting — it stays fully
   provider-agnostic.
 
-### 4.5 Composition & data flow (unchanged shape)
+### 4.5 Concurrency and the store (the critical correctness point)
+
+**A SQLite connection may only be used by the thread that created it.** This is a
+hard rule of Python's `sqlite3` (it raises `ProgrammingError: SQLite objects
+created in a thread can only be used in that same thread`); "one connection per
+thread" is the standard, ecosystem-wide answer (SQLAlchemy solves it with a
+thread-local session factory — `ScopedSession`; kravu's `adapters/db.py` already
+implements the same thread-local idea).
+
+The current wiring **defeats** that mechanism under parallelism: `cli.py` builds
+`store = JobRepository()` **once, on the main thread**, and `JobRepository.__init__`
+calls `get_connection()` eagerly and caches it in `self._conn`. If that single
+`store` is shared into worker threads, every worker writes through a connection
+owned by the main thread → error / data race. The thread-local cache in `db.py`
+only helps if **each worker thread constructs its own `JobRepository`** (so it
+calls `get_connection()` from its own thread and gets its own connection).
+
+**Resolution — inject a store factory (chosen; option b).** The parallelized use
+cases receive a `store_factory: Callable[[], JobStore]` instead of (or in addition
+to) a single `store`. Inside `work(job)`, the use case obtains a
+thread-appropriate store via the factory; because `db.py` caches one connection
+per thread, each worker thread ends up with exactly one connection and reuses it
+across the jobs it handles.
+
+- The default factory (wired in `cli.py`) is simply `JobRepository` — i.e.
+  `store_factory = JobRepository`. Called on a worker thread, it acquires that
+  thread's own connection.
+- Services still never *name* a concrete adapter: they call the injected factory.
+  This keeps the "adapters are built at the edge and injected" rule intact
+  (component-design steering) — the factory is the injected dependency.
+- Reads that happen on the main thread before/after the parallel section (e.g.
+  `store.pending_scoring(...)`, `progress` sizing) keep using the main-thread
+  store. Only the per-job `work` uses the per-thread store from the factory.
+
+Rejected alternatives: (a) constructing `JobRepository()` directly inside the use
+case — smaller, but the service then reaches for a concrete adapter, bending the
+DI rule; (c) a single DB-owning thread fed by a queue — serializes all writes and
+defeats the speedup. The factory (b) is the minimal change that keeps both
+correctness and the architecture rules.
+
+### 4.6 Composition & data flow
 
 ```
 entrypoints/cli.py         resolves workers (flag > searches.yaml > KRAVU_WORKERS > 4),
-                           wraps RichProgressReporter with a lock
+                           wraps RichProgressReporter with a lock,
+                           passes store_factory=JobRepository into composition
         │
-composition.build_pipeline_steps(..., workers=workers)   passes workers into each use case
+composition.build_pipeline_steps(..., workers=workers, store_factory=...)
+                           injects workers + store_factory into each use case
         │
 services/pipeline.py       UNCHANGED — still runs steps in order, barrier between them
         │
 services/{score,cover,tailor,expand}.py
-                           loop → run_parallel(..., workers=self._workers)
+                           main-thread read (pending_*), then
+                           run_parallel(jobs, work, workers=self._workers, ...)
+                           where work(job) uses self._store_factory() for its writes
         │
 services/parallel.py       bounded ThreadPoolExecutor, as_completed, on_done per completion
         │
-adapters/repository.py     UNCHANGED — thread-safe via WAL + thread-local connections
+adapters/repository.py     UNCHANGED CODE — but now CONSTRUCTED PER WORKER THREAD
+                           via the factory, so each thread gets its own WAL connection
 adapters/llm.py            UNCHANGED — each thread calls .complete() independently
 ```
+
+The repository's *code* does not change; what changes is that it is now
+**constructed per worker thread** rather than once and shared. That distinction is
+the whole point of this section.
 
 ## 5. Determinism & principles
 
@@ -182,6 +242,15 @@ serial baseline and asserting order-independent results:
    store writes (scores, tailored paths, cover decisions) regardless of worker
    count. For `tailor`, additionally assert the zero-fabrication guard still
    holds under parallelism.
+   - **Store constraint in tests (important):** the current `repo` fixture yields
+     a real `JobRepository` bound to one connection created on the fixture's
+     (main) thread — so running a use case at `workers>1` against it directly
+     would hit the very cross-thread error described in §4.5. Tests therefore pass
+     a **store factory** too: either `store_factory=JobRepository` (each worker
+     opens its own connection to the shared temp DB file — WAL makes concurrent
+     writes safe), or a purpose-built thread-safe in-memory fake store. Assertions
+     read back through the main-thread `repo` after the parallel section
+     completes. This keeps tests offline, deterministic, and order-independent.
 3. **Progress thread-safety**: assert `advance` is called the right number of
    times under `workers>1` (lock prevents lost updates).
 
@@ -203,17 +272,25 @@ This keeps us from building rate-limit machinery nobody has yet needed.
 
 | # | Slice | Rationale | Verification |
 |---|-------|-----------|--------------|
-| 1 | `services/parallel.py` + thread-safe `RichProgressReporter` | Foundation; nothing wired | Helper unit tests; progress lock test |
-| 2 | Adopt in **`score`** | Simplest: one LLM call, no browser | Parametrized workers=1/4 identical scores |
+| 1 | `services/parallel.py` helper + `StoreFactory` type + thread-safe `RichProgressReporter` | Foundation; nothing wired | Helper unit tests; progress lock test |
+| 2 | Adopt in **`score`** (inject `workers` + `store_factory`; wire `store_factory=JobRepository` in composition/CLI) | Simplest: one LLM call, no browser; first real store-per-thread use | Parametrized workers=1/4 identical scores; no cross-thread error |
 | 3 | Adopt in **`cover`** | Same shape as score | Parametrized workers=1/4 identical decisions |
 | 4 | Adopt in **`tailor`** | More parts (draft+judge+retry) but self-contained | Parametrized + fabrication guard intact |
 | 5 | Adopt in **`expand`** | **Last** — Playwright thread-safety is the one unknown (likely one browser context per worker, or a small renderer pool) | Test + explicit Playwright concurrency check |
 | 6 | `--workers` flag + `config.workers()` + optional `searches.yaml` key | Expose the knob once steps support it | CLI + config unit tests |
 
+The `store_factory` plumbing lands in slice 2 (with `score`, the first
+parallelized step) rather than slice 1, so the foundation slice stays pure
+infrastructure with no wiring.
+
 `explore` stays serial throughout.
 
 ## 9. Risks
 
+- **Cross-thread SQLite use (§4.5).** The current single shared `JobRepository`
+  is unsafe under threads. Mitigated by the store-factory: each worker constructs
+  its own repository → its own WAL connection. This is the single most important
+  correctness item and is addressed from the first parallelized slice.
 - **Playwright thread-safety (slice 5).** A single Playwright browser/page is not
   safe to share across threads. Mitigation: give each worker its own browser
   context (or pool contexts). This is why `expand` is sequenced last and gets a
@@ -222,6 +299,10 @@ This keeps us from building rate-limit machinery nobody has yet needed.
 - **Free-tier 429s.** Mitigated by the modest default and the deferred-backoff
   plan (§7).
 - **Progress races.** Mitigated by the lock (§4.3), covered by a test.
+- **Connection accumulation.** Each worker thread caches a connection for the run
+  via `db.py`'s thread-local map. The pool is bounded (≤ workers), lives only for
+  the run, and is released at process exit — acceptable; no explicit teardown
+  needed for a CLI run.
 
 ## 10. Success criteria
 
