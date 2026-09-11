@@ -47,8 +47,8 @@ resumable.
 
 | Stage | What happens |
 |-------|--------------|
-| 1. **discover** | Find postings across boards (JobSpy + optional ATS), dedupe by normalized URL |
-| 2. **enrich**   | Render each job page and extract the full description (JSON-LD → CSS → LLM fallback) |
+| 1. **explore** | Find postings across boards (JobSpy + optional ATS), dedupe by normalized URL |
+| 2. **expand**  | Render each job page and extract the full description (JSON-LD → CSS → LLM fallback) |
 | 3. **score**    | LLM rates fit 1–10 against your profile; only jobs ≥ your threshold proceed |
 | 4. **tailor**   | LLM rewrites your resume per job — reorganizes and emphasizes, never fabricates |
 | 5. **cover**    | LLM writes a targeted cover letter (per your policy) |
@@ -76,7 +76,7 @@ Set your provider key in the environment or `~/.kravu/.env` (e.g.
 
 ```bash
 uv run kravu init      # extract your resume, pick a model, propose searches
-uv run kravu run       # discover → enrich → score → tailor → cover
+uv run kravu run       # explore → expand → score → tailor → cover
 uv run kravu status    # per-step counts + your ranked shortlist
 ```
 
@@ -88,6 +88,7 @@ uv run kravu status    # per-step counts + your ranked shortlist
 | `kravu run` | Run the full pipeline over all outstanding work (idempotent, safe to re-run) |
 | `kravu resume <step>` | Retry the failed/pending jobs at a step (`explore`\|`expand`\|`score`\|`tailor`\|`cover`), then continue forward |
 | `kravu status` | Per-step counts (done / pending) plus your ranked shortlist |
+| `kravu clean` | Reset the workspace: clear all jobs, tailored resumes, cover letters, and logs (asks first; keeps your profile, searches, and keys) |
 | `kravu apply` | Run the gated Apply Agent over ready jobs — human-approval by default (`--auto` to opt in, `--daily-cap N`) |
 
 ## Configuration
@@ -139,7 +140,7 @@ pull request across Python 3.11 and 3.12; contributions should keep it green. Se
 
 ## Roadmap
 
-- **v0.1** *(current)* — discover → enrich → score → tailor → cover, plus the
+- **v0.1** *(current)* — explore → expand → score → tailor → cover, plus the
   human-gated Apply Agent.
 - **v0.2** — PDF rendering of materials; richer `status`; broader ATS apply support.
 - **v0.3+** — streaming/concurrent pipeline execution; scheduled runs.
