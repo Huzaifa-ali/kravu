@@ -70,6 +70,8 @@ def run_parallel(
     runs serially with no pool — behaviourally identical to a plain for-loop.
     A worker exception is contained per item (logged/re-raised defensively) and
     never aborts the batch: consistent with the pipeline's fault-tolerance rule.
+    On `KeyboardInterrupt`, stop submitting, cancel pending futures, let in-flight
+    ones finish, and re-raise (so Ctrl+C still stops the run — see §4.9).
     """
 ```
 
@@ -243,6 +245,56 @@ be backward-compatible:
   thread-safe-progress lock (§4.3) must not change how many times `advance` is
   called — these tests are the regression guard that it doesn't.
 
+## 4.9 Error handling & retries under parallelism
+
+kravu has **two distinct retry mechanisms**, at different scopes. Parallelism
+affects them differently, and it is important not to conflate them.
+
+**(1) In-call retries — the `for attempt in range(N)` loop inside a `_..._one`
+method.** `score` retries JSON parsing up to twice; `tailor` loops
+`TAILOR_MAX_ATTEMPTS` over draft→validate→judge; `cover` loops on validation.
+This logic lives entirely within one job's work function. Under parallelism it is
+**unchanged and self-contained**: each worker runs one job's `_..._one` top to
+bottom, including that job's own retry loop. Thread A retrying job-1 never
+interacts with thread B running job-2 — no shared state.
+
+**(2) Cross-run attempt counters — the `*_attempts` DB columns.** The `pending_*`
+queries gate on `COALESCE(attempts,0) < MAX`, and the `_..._one` methods call
+`bump_*_attempts(url)` (an `UPDATE ... SET x = COALESCE(x,0)+1 WHERE url=?`). This
+is what makes a step retryable *across runs*. Under parallelism this remains
+**correct, and correct precisely because of the store factory (§4.5)**:
+- Each job's URL appears exactly once in the `pending_*` list and is submitted to
+  the pool exactly once, so exactly one worker ever touches a given row's counter.
+- Each worker uses its **own connection** (from the factory), and the increment
+  targets a distinct primary key, so there is no lost-update race; WAL commits
+  each `UPDATE` atomically.
+- (Had we shared one connection across threads — the rejected design — concurrent
+  `UPDATE`s would have been a genuine hazard. The counter's integrity is a direct
+  payoff of the store-factory decision.)
+
+Note the per-step asymmetry (unchanged, just documented): `tailor` bumps its
+counter **inside** its attempt loop (one call can consume several attempts),
+`expand` bumps **once per call**, and `score` does not use a persisted counter at
+all (it retries in-call only). All three are safe because each is confined to one
+worker per job.
+
+**Behavioural change on interruption (must be understood).** In a serial run,
+Ctrl+C leaves untouched jobs with pristine counters. In a parallel run, up to
+`workers` jobs are *in flight* at the interrupt; each may have already bumped its
+counter without writing a result. Those jobs return on the next run with an
+attempt already consumed but no output — which is **correct** (the attempt was
+spent) but means an interrupted parallel run can burn up to `workers` extra
+attempts versus a clean serial stop. With budgets of 3–5 this is harmless; it is
+called out so it is not mistaken for a bug.
+
+**`KeyboardInterrupt` and the pool.** The serial pipeline lets Ctrl+C propagate to
+stop the run (`pipeline.py` re-raises it). `run_parallel` must preserve that: on
+`KeyboardInterrupt` it stops submitting new items, cancels not-yet-started
+futures, lets in-flight futures finish (they cannot be force-killed mid-I/O), and
+re-raises so the existing CLI handling (`_run_pipeline_with_progress` → exit 130)
+still fires. This is an explicit requirement on the helper, tested with a `work`
+fn that raises `KeyboardInterrupt`.
+
 ## 5. Determinism & principles
 
 Parallelism changes *when* work happens, never *what* the outcome is:
@@ -265,13 +317,16 @@ serial baseline and asserting order-independent results:
      *set/dict* of recorded work, never on order).
    - `on_done` is called exactly once per item.
    - One item raising does not prevent the others from completing.
+   - `KeyboardInterrupt` from a `work` call stops new submissions and re-raises
+     (Ctrl+C still stops the run — §4.9).
    - A concurrency probe: a `work` fn that sleeps briefly and records max
      in-flight count proves `>1` runs concurrently when `workers>1`.
 2. **Per use-case tests**: parametrize each adopted use case at `workers=1` and
    `workers=4` with the existing `FakeLLMClient` / fake renderer; assert the same
    store writes (scores, tailored paths, cover decisions) regardless of worker
    count. For `tailor`, additionally assert the zero-fabrication guard still
-   holds under parallelism.
+   holds under parallelism, and that a job's `tailor_attempts` counter is bumped
+   the same number of times at `workers=1` and `workers=4` (retry integrity).
    - **Store constraint in tests (important):** the current `repo` fixture yields
      a real `JobRepository` bound to one connection created on the fixture's
      (main) thread — so running a use case at `workers>1` against it directly
