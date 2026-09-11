@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from kravu import config
 from kravu.domain.models import Profile, ResumeFacts
 from kravu.exceptions import SearchesConfigError
 from kravu.services.suggest_searches import SuggestSearches, validate_searches
@@ -31,8 +32,10 @@ def test_suggest_builds_valid_searches_dict() -> None:
     result = SuggestSearches(_FakeLLM(reply)).run(_profile())
 
     assert result["searches"][0]["search_term"] == "DevOps engineer"
+    assert result["searches"][0]["country"] == "USA"
     assert result["sources"]["jobspy"]["enabled"] is True
-    assert result["defaults"]["per_run_cap"] == 25
+    assert result["limit"] == config.DEFAULT_LIMIT
+    assert "defaults" not in result
     validate_searches(result)
 
 
@@ -50,7 +53,7 @@ def test_suggest_defaults_to_reliable_boards() -> None:
     validate_searches(result)
 
 
-def test_validate_requires_country_indeed_when_indeed_site() -> None:
+def test_validate_requires_country_when_indeed_site() -> None:
     bad = {
         "sources": {"jobspy": {"enabled": True, "sites": ["indeed"]}},
         "searches": [{"name": "d", "search_term": "x", "location": "US"}],
@@ -77,7 +80,7 @@ def test_validate_rejects_indeed_filter_conflict() -> None:
                 "name": "d",
                 "search_term": "x",
                 "location": "US",
-                "country_indeed": "USA",
+                "country": "USA",
                 "hours_old": 168,
                 "job_type": "fulltime",
                 "is_remote": True,

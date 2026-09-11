@@ -34,6 +34,31 @@ def _install_fake_jobspy(
     monkeypatch.setitem(sys.modules, "jobspy", module)
 
 
+def _capture_jobspy(
+    monkeypatch: pytest.MonkeyPatch, rows: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Install a fake jobspy that records the kwargs of the last scrape call."""
+    module = types.ModuleType("jobspy")
+    captured: dict[str, Any] = {}
+
+    def scrape_jobs(**kwargs: Any) -> _FakeFrame:
+        captured.update(kwargs)
+        return _FakeFrame(rows)
+
+    module.scrape_jobs = scrape_jobs  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "jobspy", module)
+    return captured
+
+
+def _searches() -> dict[str, Any]:
+    return {
+        "sources": {"jobspy": {"enabled": True, "sites": ["indeed"]}},
+        "searches": [
+            {"name": "d", "search_term": "DevOps", "location": "US", "country": "USA"}
+        ],
+    }
+
+
 def test_discover_maps_rows_to_jobs(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_fake_jobspy(
         monkeypatch,
@@ -49,24 +74,23 @@ def test_discover_maps_rows_to_jobs(monkeypatch: pytest.MonkeyPatch) -> None:
             }
         ],
     )
-    source = JobSpySource()
-    searches = {
-        "sources": {"jobspy": {"enabled": True, "sites": ["indeed"]}},
-        "defaults": {"results_wanted": 5},
-        "searches": [
-            {
-                "name": "d",
-                "search_term": "DevOps",
-                "location": "US",
-                "country_indeed": "USA",
-            }
-        ],
-    }
-    jobs = source.discover(searches)
+    jobs = JobSpySource().discover(_searches(), limit=5)
     assert len(jobs) == 1
     assert jobs[0].url == "https://x.test/1"
     assert jobs[0].title == "DevOps Engineer"
     assert jobs[0].source == "indeed"
+
+
+def test_discover_uses_limit_as_fetch_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = _capture_jobspy(monkeypatch, [])
+    JobSpySource().discover(_searches(), limit=37)
+    assert captured["results_wanted"] == 37
+
+
+def test_discover_forwards_country(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = _capture_jobspy(monkeypatch, [])
+    JobSpySource().discover(_searches(), limit=5)
+    assert captured["country_indeed"] == "USA"
 
 
 def test_discover_skips_failing_site_without_raising(
@@ -81,18 +105,7 @@ def test_discover_skips_failing_site_without_raising(
     monkeypatch.setitem(sys.modules, "jobspy", module)
 
     source = JobSpySource()
-    searches = {
-        "sources": {"jobspy": {"enabled": True, "sites": ["indeed"]}},
-        "searches": [
-            {
-                "name": "d",
-                "search_term": "DevOps",
-                "location": "US",
-                "country_indeed": "USA",
-            }
-        ],
-    }
-    jobs = source.discover(searches)
+    jobs = source.discover(_searches(), limit=5)
     assert jobs == []
     assert ("d", "indeed") in source.notes
 

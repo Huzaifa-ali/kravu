@@ -138,8 +138,8 @@ class DiscoverySource(Protocol):
 
     name: str
 
-    def discover(self, searches: dict[str, object]) -> list[Job]:
-        """Run the configured searches and return discovered jobs."""
+    def discover(self, searches: dict[str, object], limit: int) -> list[Job]:
+        """Run the configured searches and return up to ``limit`` discovered jobs."""
         ...
 
 

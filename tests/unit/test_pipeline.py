@@ -18,7 +18,7 @@ class _RecordingStep:
         *,
         progress: ProgressReporter = NO_PROGRESS,
     ) -> None:
-        self._log.append(f"{self._name}:{limit}")
+        self._log.append(self._name)
 
 
 class _BoomStep:
@@ -32,14 +32,14 @@ class _BoomStep:
         raise RuntimeError("kaboom")
 
 
-def test_pipeline_runs_steps_in_order_with_cap() -> None:
+def test_pipeline_runs_steps_in_order() -> None:
     log: list[str] = []
     steps = [
-        PipelineStep("explore", _RecordingStep("explore", log), capped=False),
-        PipelineStep("score", _RecordingStep("score", log), capped=True),
+        PipelineStep("explore", _RecordingStep("explore", log)),
+        PipelineStep("score", _RecordingStep("score", log)),
     ]
-    result = Pipeline(steps, per_run_cap=25).run(store=object())
-    assert log == ["explore:None", "score:25"]
+    result = Pipeline(steps).run(store=object())
+    assert log == ["explore", "score"]
     assert result["explore"] == "ok"
     assert result["score"] == "ok"
 
@@ -47,9 +47,9 @@ def test_pipeline_runs_steps_in_order_with_cap() -> None:
 def test_pipeline_continues_after_step_crash() -> None:
     log: list[str] = []
     steps = [
-        PipelineStep("expand", _BoomStep(), capped=False),
-        PipelineStep("score", _RecordingStep("score", log), capped=True),
+        PipelineStep("expand", _BoomStep()),
+        PipelineStep("score", _RecordingStep("score", log)),
     ]
-    result = Pipeline(steps, per_run_cap=10).run(store=object())
+    result = Pipeline(steps).run(store=object())
     assert "kaboom" in result["expand"]
-    assert log == ["score:10"]
+    assert log == ["score"]

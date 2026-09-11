@@ -22,6 +22,18 @@ from kravu.exceptions import ConfigError
 
 APP_NAME = "kravu"
 
+# Per-phase retry budgets for the blackboard's pending_* gates. Tailor and cover
+# allow more attempts than enrich and apply because the no-fabrication guards
+# (principles.md) can legitimately reject and retry a generation several times.
+ENRICH_MAX_ATTEMPTS = 3
+TAILOR_MAX_ATTEMPTS = 5
+COVER_MAX_ATTEMPTS = 5
+APPLY_MAX_ATTEMPTS = 3
+
+# Default number of jobs a run explores and processes when neither searches.yaml
+# nor KRAVU_LIMIT specifies one.
+DEFAULT_LIMIT = 100
+
 
 def app_home() -> Path:
     """Root directory for all kravu runtime data.
@@ -130,6 +142,22 @@ def min_score() -> int:
         return int(raw)
     except ValueError:
         raise ConfigError(f"KRAVU_MIN_SCORE must be an integer, got {raw!r}.") from None
+
+
+def limit() -> int:
+    """The number of jobs a run explores and processes, from ``KRAVU_LIMIT``.
+
+    Unlike model/min_score, a run limit is always safe to default, so an unset or
+    non-integer value falls back to ``DEFAULT_LIMIT`` rather than raising.
+    (``searches.yaml`` may carry a ``limit`` key that overrides this per run.)
+    """
+    raw = os.environ.get("KRAVU_LIMIT")
+    if not raw:
+        return DEFAULT_LIMIT
+    try:
+        return int(raw)
+    except ValueError:
+        return DEFAULT_LIMIT
 
 
 def cover_letter_default() -> str:

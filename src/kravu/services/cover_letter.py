@@ -17,7 +17,7 @@ from kravu.domain.models import Job, Profile
 from kravu.domain.ports import NO_PROGRESS, JobStore, LLMClient, ProgressReporter
 from kravu.services.tailor_validate import SKILL_WATCHLIST
 
-_MAX_ATTEMPTS = 5
+_MAX_ATTEMPTS = config.COVER_MAX_ATTEMPTS
 _WORD_CAP = 250
 _REQUIRED_SIGNALS = (
     "cover letter required",

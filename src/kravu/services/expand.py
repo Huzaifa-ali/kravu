@@ -13,10 +13,11 @@ from __future__ import annotations
 import json
 from typing import Protocol
 
+from kravu import config
 from kravu.adapters import prompts
 from kravu.domain.ports import NO_PROGRESS, JobStore, LLMClient, ProgressReporter
 
-_MAX_ATTEMPTS = 3
+_MAX_ATTEMPTS = config.ENRICH_MAX_ATTEMPTS
 _MIN_EXTRACT_LEN = 200
 
 

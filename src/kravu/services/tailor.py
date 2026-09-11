@@ -21,7 +21,7 @@ from kravu.domain.ports import NO_PROGRESS, JobStore, LLMClient, ProgressReporte
 from kravu.exceptions import LLMResponseError
 from kravu.services.tailor_validate import validate_no_fabrication
 
-_MAX_ATTEMPTS = 5
+_MAX_ATTEMPTS = config.TAILOR_MAX_ATTEMPTS
 
 
 def _slug(company: str, title: str) -> str:

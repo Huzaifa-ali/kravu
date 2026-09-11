@@ -112,13 +112,15 @@ def test_explore_reports_progress(repo: JobRepository) -> None:
     class _FakeSource:
         name = "fake"
 
-        def discover(self, searches: dict[str, object]) -> list[Job]:
+        def discover(self, searches: dict[str, object], limit: int) -> list[Job]:
             return [Job(url="https://a.test/x", title="A", description="short")]
 
     reporter = _RecordingReporter()
-    ExploreJobs([_FakeSource()]).run(repo, {"searches": []}, progress=reporter)
+    ExploreJobs([_FakeSource()]).run(
+        repo, {"searches": []}, limit=10, progress=reporter
+    )
 
-    assert any(e.startswith("start:explore") for e in reporter.events)
+    assert "start:explore:10" in reporter.events
     assert "finish:explore" in reporter.events
 
 
@@ -154,10 +156,10 @@ def test_pipeline_passes_reporter_to_every_step() -> None:
     seen: list[str] = []
     reporter = _RecordingReporter()
     steps = [
-        PipelineStep("explore", _ProgressAwareStep("explore", seen), capped=False),
-        PipelineStep("score", _ProgressAwareStep("score", seen), capped=True),
+        PipelineStep("explore", _ProgressAwareStep("explore", seen)),
+        PipelineStep("score", _ProgressAwareStep("score", seen)),
     ]
-    Pipeline(steps, per_run_cap=25).run(store=object(), progress=reporter)
+    Pipeline(steps).run(store=object(), progress=reporter)
 
     assert seen == ["explore", "score"]
     assert "advance:explore" in reporter.events
@@ -167,7 +169,7 @@ def test_pipeline_passes_reporter_to_every_step() -> None:
 def test_pipeline_runs_without_reporter() -> None:
     """Reporter is optional; the existing run(store) signature still works."""
     seen: list[str] = []
-    steps = [PipelineStep("score", _ProgressAwareStep("score", seen), capped=True)]
-    result = Pipeline(steps, per_run_cap=10).run(store=object())
+    steps = [PipelineStep("score", _ProgressAwareStep("score", seen))]
+    result = Pipeline(steps).run(store=object())
     assert result["score"] == "ok"
     assert seen == ["score"]

@@ -14,7 +14,7 @@ class _FakeSource:
         self._jobs = jobs
         self.notes: dict[str, str] = {}
 
-    def discover(self, searches: dict[str, object]) -> list[Job]:
+    def discover(self, searches: dict[str, object], limit: int) -> list[Job]:
         return self._jobs
 
 
@@ -33,7 +33,7 @@ def test_explore_dedupes_by_normalized_url(repo: JobRepository) -> None:
             Job(url="https://example.com/1", title="A dup", description="short"),
         ]
     )
-    added = ExploreJobs([source]).run(repo, {"searches": []})
+    added = ExploreJobs([source]).run(repo, {"searches": []}, limit=100)
     assert added == 1
     assert len(repo.shortlist(min_score=0)) == 0
     assert repo.stats()["total"] == 1
@@ -50,7 +50,7 @@ def test_explore_promotes_only_rich_descriptions(repo: JobRepository) -> None:
             Job(url="https://a.test/thin", title="T", description="Apply now!"),
         ]
     )
-    ExploreJobs([source]).run(repo, {"searches": []})
+    ExploreJobs([source]).run(repo, {"searches": []}, limit=100)
     rich_job = repo.get("https://a.test/rich")
     thin_job = repo.get("https://a.test/thin")
     assert rich_job is not None and rich_job.full_description is not None

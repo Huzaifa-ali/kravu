@@ -9,6 +9,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import UTC, datetime
 
+from kravu import config
 from kravu.adapters.db import get_connection
 from kravu.domain.models import Job, PipelinePhase
 
@@ -105,7 +106,8 @@ class JobRepository:
         # across runs: pending jobs are picked up again until they succeed or hit 3.
         sql = (
             "SELECT * FROM jobs "
-            "WHERE full_description IS NULL AND COALESCE(enrich_attempts, 0) < 3"
+            "WHERE full_description IS NULL "
+            f"AND COALESCE(enrich_attempts, 0) < {config.ENRICH_MAX_ATTEMPTS}"
         )
         if limit:
             sql += f" LIMIT {int(limit)}"
@@ -173,7 +175,7 @@ class JobRepository:
             "SELECT * FROM jobs "
             "WHERE fit_score >= ? AND full_description IS NOT NULL "
             "AND tailored_resume_path IS NULL "
-            "AND COALESCE(tailor_attempts, 0) < 5 "
+            f"AND COALESCE(tailor_attempts, 0) < {config.TAILOR_MAX_ATTEMPTS} "
             "ORDER BY fit_score DESC"
         )
         if limit:
@@ -205,7 +207,7 @@ class JobRepository:
             "SELECT * FROM jobs "
             "WHERE tailored_resume_path IS NOT NULL "
             "AND cover_at IS NULL "
-            "AND COALESCE(cover_attempts, 0) < 5 "
+            f"AND COALESCE(cover_attempts, 0) < {config.COVER_MAX_ATTEMPTS} "
             "ORDER BY fit_score DESC"
         )
         if limit:
@@ -285,7 +287,7 @@ class JobRepository:
             "WHERE tailored_resume_path IS NOT NULL "
             "AND fit_score >= ? "
             "AND (apply_status IS NULL OR apply_status IN ('failed', 'pending')) "
-            "AND COALESCE(apply_attempts, 0) < 3 "
+            f"AND COALESCE(apply_attempts, 0) < {config.APPLY_MAX_ATTEMPTS} "
             "ORDER BY fit_score DESC"
         )
         if limit:
@@ -377,7 +379,7 @@ class JobRepository:
                 ),
                 "pending": one(
                     "SELECT COUNT(*) FROM jobs WHERE full_description IS NULL "
-                    "AND COALESCE(enrich_attempts, 0) < 3"
+                    f"AND COALESCE(enrich_attempts, 0) < {config.ENRICH_MAX_ATTEMPTS}"
                 ),
             },
             PipelinePhase.SCORE.value: {
@@ -394,7 +396,7 @@ class JobRepository:
                 "pending": one(
                     "SELECT COUNT(*) FROM jobs WHERE fit_score >= ? "
                     "AND tailored_resume_path IS NULL "
-                    "AND COALESCE(tailor_attempts, 0) < 5",
+                    f"AND COALESCE(tailor_attempts, 0) < {config.TAILOR_MAX_ATTEMPTS}",
                     (min_score,),
                 ),
             },
@@ -402,7 +404,8 @@ class JobRepository:
                 "done": one("SELECT COUNT(*) FROM jobs WHERE cover_at IS NOT NULL"),
                 "pending": one(
                     "SELECT COUNT(*) FROM jobs WHERE tailored_resume_path IS NOT NULL "
-                    "AND cover_at IS NULL AND COALESCE(cover_attempts, 0) < 5"
+                    "AND cover_at IS NULL "
+                    f"AND COALESCE(cover_attempts, 0) < {config.COVER_MAX_ATTEMPTS}"
                 ),
             },
         }

@@ -43,13 +43,11 @@ DEFAULT_SITES: tuple[str, ...] = ("indeed", "linkedin")
 _PASSTHROUGH = (
     "search_term",
     "location",
-    "results_wanted",
     "hours_old",
     "job_type",
     "is_remote",
     "distance",
     "google_search_term",
-    "country_indeed",
     "description_format",
 )
 
@@ -63,11 +61,12 @@ class JobSpySource:
         """Initialize with an empty per-(search, site) notes map."""
         self.notes: dict[tuple[str, str], str] = {}
 
-    def discover(self, searches: dict[str, Any]) -> list[Job]:
+    def discover(self, searches: dict[str, Any], limit: int) -> list[Job]:
         """Run every configured search across every site and return jobs.
 
         Args:
             searches: The parsed ``searches.yaml`` dict.
+            limit: Per-board fetch ceiling (results requested from each board).
 
         Returns:
             A flat list of ``Job`` rows (discovery fields only). Duplicates are
@@ -82,11 +81,15 @@ class JobSpySource:
         jobs: list[Job] = []
         for entry in searches.get("searches", []):
             for site in sites:
-                jobs.extend(self._run_one_site(entry, site, defaults))
+                jobs.extend(self._run_one_site(entry, site, defaults, limit))
         return jobs
 
     def _run_one_site(
-        self, entry: dict[str, Any], site: str, defaults: dict[str, Any]
+        self,
+        entry: dict[str, Any],
+        site: str,
+        defaults: dict[str, Any],
+        limit: int,
     ) -> list[Job]:
         """Scrape a single site for one search; record the outcome, never raise."""
         name = str(entry.get("name", entry.get("search_term", "search")))
@@ -99,11 +102,13 @@ class JobSpySource:
 
         import jobspy  # type: ignore[import-untyped]  # no stubs shipped
 
-        kwargs: dict[str, Any] = {"site_name": [site]}
+        kwargs: dict[str, Any] = {"site_name": [site], "results_wanted": limit}
         for source in (defaults, entry):
             for field in _PASSTHROUGH:
                 if field in source:
                     kwargs[field] = source[field]
+            if source.get("country") is not None:
+                kwargs["country_indeed"] = source["country"]
         try:
             frame = jobspy.scrape_jobs(**kwargs)
         except Exception as exc:  # noqa: BLE001 - record and continue per spec

@@ -4,10 +4,9 @@ Pure wiring, kept out of the Typer layer so it can be unit-tested. Adapters are
 constructed at the edge (in ``cli.py``) and passed in here; this module only
 assembles them into the ordered ``PipelineStep`` list and selects an apply driver.
 
-ExploreJobs takes ``run(store, searches)`` rather than the pipeline's uniform
-``run(store, limit=None)``, so it is wrapped in ``_ExploreStep`` which captures
-the searches dict and exposes the uniform signature (discovery is uncapped, so
-``limit`` is ignored).
+ExploreJobs takes ``run(store, searches, limit)`` rather than the pipeline's
+uniform ``run(store, limit=None)``, so it is wrapped in ``_ExploreStep`` which
+captures the searches dict and the run limit and exposes the uniform signature.
 """
 
 from __future__ import annotations
@@ -45,16 +44,20 @@ _DRIVERS: dict[str, type[BrowserAgentDriver]] = {
 
 
 class _ExploreStep:
-    """Adapt ExploreJobs to the pipeline's uniform ``run(store, limit)`` shape.
+    """Adapt ExploreJobs to the pipeline's uniform ``run(store, ...)`` shape.
 
-    ExploreJobs needs the searches config, not a per-run cap; discovery is
-    uncapped, so ``limit`` is accepted and ignored.
+    ExploreJobs needs the searches config and the run limit, captured here so the
+    step exposes the uniform ``run(store, limit=None, *, progress)`` signature the
+    pipeline calls.
     """
 
-    def __init__(self, explore: ExploreJobs, searches: dict[str, Any]) -> None:
-        """Capture the ExploreJobs use case and the searches config."""
+    def __init__(
+        self, explore: ExploreJobs, searches: dict[str, Any], limit: int
+    ) -> None:
+        """Capture the ExploreJobs use case, the searches config, and the limit."""
         self._explore = explore
         self._searches = searches
+        self._limit = limit
 
     def run(
         self,
@@ -63,8 +66,8 @@ class _ExploreStep:
         *,
         progress: ProgressReporter = NO_PROGRESS,
     ) -> None:
-        """Run discovery with the captured searches (``limit`` unused)."""
-        self._explore.run(store, self._searches, progress=progress)
+        """Run discovery with the captured searches and limit."""
+        self._explore.run(store, self._searches, self._limit, progress=progress)
 
 
 def build_pipeline_steps(
@@ -75,27 +78,19 @@ def build_pipeline_steps(
     min_score: int,
     cover_policy: str,
     searches: dict[str, Any],
+    limit: int,
 ) -> list[PipelineStep]:
     """Assemble the ordered pipeline steps from constructed adapters.
 
-    LLM-spending steps (score/tailor/cover) are marked ``capped`` so the
-    orchestrator applies the per-run cap. Enrichment is also capped because it
-    renders a page per job (Playwright + optional LLM fallback) — the costliest
-    non-LLM step — so ``per_run_cap`` bounds a single run's work end to end. Only
-    discovery runs uncapped.
+    Explore admits up to ``limit`` new jobs; the remaining steps process all of
+    their pending work.
     """
     return [
-        PipelineStep(
-            "explore", _ExploreStep(ExploreJobs(sources), searches), capped=False
-        ),
-        PipelineStep("expand", ExpandJob(renderer, llm), capped=True),
-        PipelineStep("score", ScoreJobFit(llm, profile, min_score), capped=True),
-        PipelineStep("tailor", TailorResume(llm, profile, min_score), capped=True),
-        PipelineStep(
-            "cover",
-            DraftCoverLetter(llm, profile, cover_policy, min_score),
-            capped=True,
-        ),
+        PipelineStep("explore", _ExploreStep(ExploreJobs(sources), searches, limit)),
+        PipelineStep("expand", ExpandJob(renderer, llm)),
+        PipelineStep("score", ScoreJobFit(llm, profile, min_score)),
+        PipelineStep("tailor", TailorResume(llm, profile, min_score)),
+        PipelineStep("cover", DraftCoverLetter(llm, profile, cover_policy, min_score)),
     ]
 
 

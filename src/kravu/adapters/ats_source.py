@@ -48,15 +48,17 @@ class AtsSource:
         self._fetch = fetch or _default_fetch
         self.notes: dict[str, str] = {}
 
-    def discover(self, searches: dict[str, Any]) -> list[Job]:
-        """Pull each configured company board and return discovered jobs."""
+    def discover(self, searches: dict[str, Any], limit: int) -> list[Job]:
+        """Pull each configured company board and return at most ``limit`` jobs."""
         config = searches.get("sources", {}).get("ats", {})
         if not config.get("enabled", False):
             return []
         jobs: list[Job] = []
         for company in config.get("companies", []):
             jobs.extend(self._pull(company))
-        return jobs
+            if len(jobs) >= limit:
+                return jobs[:limit]
+        return jobs[:limit]
 
     def _pull(self, company: dict[str, Any]) -> list[Job]:
         """Fetch one company's board, mapping by ATS type; never raises."""

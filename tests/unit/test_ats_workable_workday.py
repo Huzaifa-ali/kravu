@@ -59,7 +59,7 @@ def test_workable_maps_jobs() -> None:
             }
         }
     }
-    jobs = source.discover(searches)
+    jobs = source.discover(searches, limit=50)
     assert [j.url for j in jobs] == ["https://apply.workable.com/acme/j/ABC123/"]
     assert jobs[0].title == "ML Engineer"
     assert jobs[0].source == "workable:acme"
@@ -76,7 +76,7 @@ def test_workable_empty_board_recorded() -> None:
             }
         }
     }
-    assert source.discover(searches) == []
+    assert source.discover(searches, limit=50) == []
     assert source.notes["workable:typo"] == "empty"
 
 
@@ -117,7 +117,7 @@ def test_workday_posts_to_cxs_and_maps_jobs() -> None:
             }
         }
     }
-    jobs = source.discover(searches)
+    jobs = source.discover(searches, limit=50)
 
     # A POST body was sent (not a bare GET).
     assert fetch.calls[0][1] is not None  # type: ignore[attr-defined]
@@ -141,6 +141,6 @@ def test_workday_bad_url_recorded_not_raised() -> None:
             }
         }
     }
-    jobs = source.discover(searches)  # must not raise
+    jobs = source.discover(searches, limit=50)  # must not raise
     assert jobs == []
     assert any("workday" in key for key in source.notes)
