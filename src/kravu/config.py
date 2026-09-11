@@ -144,6 +144,22 @@ def min_score() -> int:
         raise ConfigError(f"KRAVU_MIN_SCORE must be an integer, got {raw!r}.") from None
 
 
+def limit() -> int:
+    """The number of jobs a run explores and processes, from ``KRAVU_LIMIT``.
+
+    Unlike model/min_score, a run limit is always safe to default, so an unset or
+    non-integer value falls back to ``DEFAULT_LIMIT`` rather than raising.
+    (``searches.yaml`` may carry a ``limit`` key that overrides this per run.)
+    """
+    raw = os.environ.get("KRAVU_LIMIT")
+    if not raw:
+        return DEFAULT_LIMIT
+    try:
+        return int(raw)
+    except ValueError:
+        return DEFAULT_LIMIT
+
+
 def cover_letter_default() -> str:
     """The cover-letter policy, from ``KRAVU_COVER_LETTER``.
 
