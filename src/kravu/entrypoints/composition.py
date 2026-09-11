@@ -79,13 +79,16 @@ def build_pipeline_steps(
     """Assemble the ordered pipeline steps from constructed adapters.
 
     LLM-spending steps (score/tailor/cover) are marked ``capped`` so the
-    orchestrator applies the per-run cap; discovery/enrichment run uncapped.
+    orchestrator applies the per-run cap. Enrichment is also capped because it
+    renders a page per job (Playwright + optional LLM fallback) — the costliest
+    non-LLM step — so ``per_run_cap`` bounds a single run's work end to end. Only
+    discovery runs uncapped.
     """
     return [
         PipelineStep(
             "explore", _ExploreStep(ExploreJobs(sources), searches), capped=False
         ),
-        PipelineStep("expand", ExpandJob(renderer, llm), capped=False),
+        PipelineStep("expand", ExpandJob(renderer, llm), capped=True),
         PipelineStep("score", ScoreJobFit(llm, profile, min_score), capped=True),
         PipelineStep("tailor", TailorResume(llm, profile, min_score), capped=True),
         PipelineStep(
