@@ -175,13 +175,19 @@ def _resolve_cover_policy(searches: dict[str, Any]) -> str:
     return config.cover_letter_default()
 
 
+def _resolve_limit(searches: dict[str, Any]) -> int:
+    """Run limit from ``searches.yaml`` if present, else ``KRAVU_LIMIT``/default."""
+    if "limit" in searches:
+        return int(searches["limit"])
+    return config.limit()
+
+
 def _pipeline(
     profile: Profile, searches: dict[str, Any], sources: list[DiscoverySource]
 ) -> Pipeline:
-    defaults = searches.get("defaults", {})
-    per_run_cap = int(defaults.get("per_run_cap", 25))
     min_score = _resolve_min_score(searches)
     cover_policy = _resolve_cover_policy(searches)
+    limit = _resolve_limit(searches)
     steps = build_pipeline_steps(
         sources=sources,
         llm=LiteLLMClient(),
@@ -190,8 +196,9 @@ def _pipeline(
         min_score=min_score,
         cover_policy=cover_policy,
         searches=searches,
+        limit=limit,
     )
-    return Pipeline(steps, per_run_cap=per_run_cap)
+    return Pipeline(steps)
 
 
 def _log_source_notes(sources: list[DiscoverySource]) -> None:
