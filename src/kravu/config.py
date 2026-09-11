@@ -22,6 +22,18 @@ from kravu.exceptions import ConfigError
 
 APP_NAME = "kravu"
 
+# Per-phase retry budgets for the blackboard's pending_* gates. Tailor and cover
+# allow more attempts than enrich and apply because the no-fabrication guards
+# (principles.md) can legitimately reject and retry a generation several times.
+ENRICH_MAX_ATTEMPTS = 3
+TAILOR_MAX_ATTEMPTS = 5
+COVER_MAX_ATTEMPTS = 5
+APPLY_MAX_ATTEMPTS = 3
+
+# Default number of jobs a run explores and processes when neither searches.yaml
+# nor KRAVU_LIMIT specifies one.
+DEFAULT_LIMIT = 100
+
 
 def app_home() -> Path:
     """Root directory for all kravu runtime data.
