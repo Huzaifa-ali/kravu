@@ -50,7 +50,9 @@ def run_parallel(
         workers: Degree of concurrency. ``<= 1`` runs a plain serial loop;
             ``> 1`` uses a thread pool of that size.
         on_done: Optional callback invoked once per item after its ``work``
-            returns (serial path) or completes (pooled path).
+            returns (serial path) or completes (pooled path). It always runs on
+            the calling thread (never a pool worker), so it needs no locking of
+            its own — the thread-safe progress reporter aside.
 
     Raises:
         KeyboardInterrupt: If ``work`` raises it, or the run is interrupted.

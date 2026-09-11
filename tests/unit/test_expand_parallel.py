@@ -64,3 +64,7 @@ def test_expand_identical_serial_and_parallel(
         for url in urls
     }
     assert enriched == {url: "A real job description here." for url in urls}
+    if workers > 1:
+        # Each worker builds its own renderer via the factory, so more than one
+        # thread must have called it (proves renderer-per-worker, not shared).
+        assert len(factory.threads) > 1
