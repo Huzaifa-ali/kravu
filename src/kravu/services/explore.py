@@ -12,7 +12,12 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
-from kravu.domain.ports import DiscoverySource, JobStore
+from kravu.domain.ports import (
+    NO_PROGRESS,
+    DiscoverySource,
+    JobStore,
+    ProgressReporter,
+)
 
 _SECTION_SIGNALS = (
     "responsibilit",
@@ -51,18 +56,26 @@ class ExploreJobs:
         """Store the injected discovery sources."""
         self._sources = sources
 
-    def run(self, store: JobStore, searches: dict[str, Any]) -> int:
+    def run(
+        self,
+        store: JobStore,
+        searches: dict[str, Any],
+        *,
+        progress: ProgressReporter = NO_PROGRESS,
+    ) -> int:
         """Discover jobs and persist the new ones.
 
         Args:
             store: The persistence port.
             searches: The parsed ``searches.yaml`` dict.
+            progress: Optional progress sink; advances once per source.
 
         Returns:
             The number of newly persisted (previously unseen) jobs.
         """
         seen: set[str] = set()
         added = 0
+        progress.start_step("explore", len(self._sources))
         for source in self._sources:
             for job in source.discover(searches):
                 canonical = normalize_url(job.url)
@@ -74,4 +87,6 @@ class ExploreJobs:
                     added += 1
                     if _is_real_description(job.description):
                         store.set_enrichment(canonical, job.description, None)
+            progress.advance("explore", source.name)
+        progress.finish_step("explore", f"{added} new jobs")
         return added

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from kravu.domain.ports import NO_PROGRESS, ProgressReporter
 from kravu.services.pipeline import Pipeline, PipelineStep
 
 
@@ -10,12 +11,24 @@ class _RecordingStep:
         self._name = name
         self._log = log
 
-    def run(self, store: object, limit: int | None = None) -> None:
+    def run(
+        self,
+        store: object,
+        limit: int | None = None,
+        *,
+        progress: ProgressReporter = NO_PROGRESS,
+    ) -> None:
         self._log.append(f"{self._name}:{limit}")
 
 
 class _BoomStep:
-    def run(self, store: object, limit: int | None = None) -> None:
+    def run(
+        self,
+        store: object,
+        limit: int | None = None,
+        *,
+        progress: ProgressReporter = NO_PROGRESS,
+    ) -> None:
         raise RuntimeError("kaboom")
 
 

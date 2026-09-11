@@ -14,7 +14,7 @@ import re
 from kravu import config
 from kravu.adapters import prompts
 from kravu.domain.models import Job, Profile
-from kravu.domain.ports import JobStore, LLMClient
+from kravu.domain.ports import NO_PROGRESS, JobStore, LLMClient, ProgressReporter
 from kravu.services.tailor_validate import SKILL_WATCHLIST
 
 _MAX_ATTEMPTS = 5
@@ -59,11 +59,21 @@ class DraftCoverLetter:
         self._policy = policy
         self._min_score = min_score
 
-    def run(self, store: JobStore, limit: int | None = None) -> None:
+    def run(
+        self,
+        store: JobStore,
+        limit: int | None = None,
+        *,
+        progress: ProgressReporter = NO_PROGRESS,
+    ) -> None:
         """Process every pending tailored job (up to ``limit``). Never raises."""
         config.ensure_dirs()
-        for job in store.pending_cover(self._min_score, limit):
+        jobs = store.pending_cover(self._min_score, limit)
+        progress.start_step("cover", len(jobs))
+        for job in jobs:
             self._process_one(store, job)
+            progress.advance("cover", job.company)
+        progress.finish_step("cover")
 
     def _process_one(self, store: JobStore, job: Job) -> None:
         if self._policy == "never" or not self._needed(job):

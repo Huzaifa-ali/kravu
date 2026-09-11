@@ -12,7 +12,7 @@ from __future__ import annotations
 from kravu.adapters import prompts
 from kravu.adapters.llm import parse_json
 from kravu.domain.models import Profile
-from kravu.domain.ports import JobStore, LLMClient
+from kravu.domain.ports import NO_PROGRESS, JobStore, LLMClient, ProgressReporter
 from kravu.exceptions import LLMResponseError
 
 
@@ -25,10 +25,20 @@ class ScoreJobFit:
         self._profile = profile
         self._min_score = min_score
 
-    def run(self, store: JobStore, limit: int | None = None) -> None:
+    def run(
+        self,
+        store: JobStore,
+        limit: int | None = None,
+        *,
+        progress: ProgressReporter = NO_PROGRESS,
+    ) -> None:
         """Score every pending job (up to ``limit``). Never raises per job."""
-        for job in store.pending_scoring(limit):
+        jobs = store.pending_scoring(limit)
+        progress.start_step("score", len(jobs))
+        for job in jobs:
             self._score_one(store, job.url, job.full_description or "")
+            progress.advance("score", job.company)
+        progress.finish_step("score")
 
     def _score_one(self, store: JobStore, url: str, description: str) -> None:
         prompt = prompts.score_prompt(
