@@ -376,11 +376,15 @@ infrastructure with no wiring.
   is unsafe under threads. Mitigated by the store-factory: each worker constructs
   its own repository → its own WAL connection. This is the single most important
   correctness item and is addressed from the first parallelized slice.
-- **Playwright thread-safety (slice 5).** A single shared renderer is not safe to
-  drive from multiple threads. Mitigation: a renderer factory (§4.7) so each
-  worker gets its own renderer. This is why `expand` is sequenced last and gets a
-  dedicated concurrency check; if per-thread launches prove costly, `expand` can
-  ship with a lower default worker count than the LLM steps.
+- **Playwright thread-safety (slice 5) — VALIDATED.** A single shared renderer is
+  not safe to drive from multiple threads, so each worker gets its own renderer
+  via the factory (§4.7). This has been confirmed against real headless Chromium:
+  `PlaywrightPageRenderer` opens its own `sync_playwright()` context per
+  `render()` call, so no Playwright object is shared or driven across threads. An
+  opt-in integration test (`tests/integration/test_expand_playwright_threads.py`,
+  marked `playwright`, excluded from the default offline suite) renders across a
+  4-worker pool with real Chromium and passes. The earlier concern is resolved;
+  parallel `expand` is safe.
 - **Free-tier 429s.** Mitigated by the modest default and the deferred-backoff
   plan (§7).
 - **Progress races.** Mitigated by the lock (§4.3), covered by a test.
