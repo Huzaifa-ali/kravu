@@ -37,7 +37,8 @@ The current design has three related problems:
 
 - `searches.yaml` exposes **one** business number: `limit`.
 - User sets `limit: 100` → explore admits up to **100 new (deduped) jobs** into
-  the pipeline this run.
+  the pipeline this run. `limit` is the **overall run total**, independent of how
+  many sources or sites are configured (never per-source, never per-site).
 - **Every downstream step processes that full set** — no per-step business cap.
   If 90% survive scoring, apply operates on those ~90. The funnel narrows by real
   outcomes (fit score, cover policy), never by a hidden throttle.
@@ -82,23 +83,32 @@ sources:
 
 ## Behavior details
 
-### Explore cap enforcement (deterministic)
+### Explore cap enforcement — `limit` is the overall run total
 
-`ExploreJobs.run` accepts a `limit`. It counts only **newly persisted** jobs and
-stops admitting once `added == limit`. Order is deterministic: source order
-(JobSpy first, then ATS if enabled), then discovery order within a source.
-Dedup by normalized URL still applies before counting. Idempotent: jobs not
-admitted this run are simply not persisted and are rediscovered next run.
+`limit` is the **total number of jobs a run admits, independent of how many
+sources or sites are configured.** `limit: 100` means 100 jobs this run — never
+per-source, never per-site.
+
+Enforcement is **gather-then-cap** (no source is privileged by position):
+`ExploreJobs.run` gathers results from **all** enabled sources, dedupes the full
+union by normalized URL, then admits the **first `limit`** new jobs. Iteration
+order within the gathered union is deterministic, so the outcome is reproducible;
+no source wins simply because it ran first. Idempotent: jobs not admitted this run
+are not persisted and are rediscovered next run.
 
 The explore progress total is `limit`; `advance` is called once per **newly
 persisted** job (so the bar reflects real intake, not source ticks).
 
-### JobSpy fetch count from `limit`
+### JobSpy fetch count from `limit` (internal fetch ceiling)
 
-`JobSpySource.discover` receives the run `limit` and uses it as the per-search /
-per-site fetch count (replacing the `results_wanted` passthrough). It fetches up
-to `limit` per board so the deduped union can reach `limit`. Over-fetch across
-multiple sites is fine — `ExploreJobs` dedupes and caps at persist time.
+JobSpy's own default per-board fetch is small (~15), which would starve
+`limit: 100`. So explore passes the run `limit` down as the per-board fetch
+**ceiling**: each enabled board is asked for **up to `limit`** results
+(replacing the `results_wanted` passthrough). This is *not* "limit per board" —
+it is an upper request bound so that a single productive board can fill the whole
+`limit` when other boards return empty/403. Over-fetching across multiple sites is
+harmless: `ExploreJobs` dedupes the union and enforces the real overall `limit` at
+persist time.
 
 ### Downstream steps uncapped
 
@@ -130,9 +140,12 @@ literal. Behavior is unchanged (still 3); the value just has one home.
 
 ## Testing strategy (TDD)
 
-- **Explore cap:** given sources returning more than `limit` unique jobs, exactly
-  `limit` are persisted; the surplus is not. Deterministic by source order.
-- **Explore reaches limit across sites:** dedup union caps at `limit`.
+- **Explore cap (overall total):** given multiple enabled sources returning more
+  than `limit` unique jobs combined, exactly `limit` are persisted; the surplus is
+  not. `limit` is the total across all sources, not per-source. Deterministic
+  (gather-then-cap; no source privileged by order).
+- **Explore reaches limit from one source:** a single productive board can fill
+  the whole `limit` (fetch ceiling = `limit` per board).
 - **Progress:** explore reports `start:explore:<limit>` and advances once per
   persisted job.
 - **Attempts constant:** `config.MAX_ATTEMPTS == 3`; `pending_enrichment` respects
