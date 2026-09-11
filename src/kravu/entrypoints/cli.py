@@ -225,6 +225,8 @@ def _pipeline(
         cover_policy=cover_policy,
         searches=searches,
         limit=limit,
+        workers=4,  # TODO(Task 6): replace with resolved config.workers()
+        store_factory=JobRepository,
     )
     return Pipeline(steps)
 

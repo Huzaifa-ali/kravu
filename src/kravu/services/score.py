@@ -14,16 +14,37 @@ from kravu.adapters.llm import parse_json
 from kravu.domain.models import Profile
 from kravu.domain.ports import NO_PROGRESS, JobStore, LLMClient, ProgressReporter
 from kravu.exceptions import LLMResponseError
+from kravu.services.parallel import StoreFactory, run_parallel
 
 
 class ScoreJobFit:
     """Score pending jobs against the candidate's resume facts."""
 
-    def __init__(self, llm: LLMClient, profile: Profile, min_score: int) -> None:
-        """Store the model port, the candidate profile, and the threshold."""
+    def __init__(
+        self,
+        llm: LLMClient,
+        profile: Profile,
+        min_score: int,
+        *,
+        workers: int = 1,
+        store_factory: StoreFactory | None = None,
+    ) -> None:
+        """Store the model port, the candidate profile, and the threshold.
+
+        Args:
+            llm: The model port used to score each job.
+            profile: The candidate profile whose resume facts drive scoring.
+            min_score: The threshold a job must clear to reach the shortlist.
+            workers: Degree of concurrency for per-job scoring (``<= 1`` serial).
+            store_factory: Builds a fresh per-thread store when running in
+                parallel; each worker thread must use its own SQLite connection.
+                ``None`` keeps the shared store (serial-safe default).
+        """
         self._llm = llm
         self._profile = profile
         self._min_score = min_score
+        self._workers = workers
+        self._store_factory = store_factory
 
     def run(
         self,
@@ -35,10 +56,23 @@ class ScoreJobFit:
         """Score every pending job (up to ``limit``). Never raises per job."""
         jobs = store.pending_scoring(limit)
         progress.start_step("score", len(jobs))
-        for job in jobs:
-            self._score_one(store, job.url, job.full_description or "")
-            progress.advance("score", job.company)
+        run_parallel(
+            jobs,
+            lambda job: self._score_one(
+                self._store_for(store), job.url, job.full_description or ""
+            ),
+            workers=self._workers,
+            on_done=lambda job: progress.advance("score", job.company),
+        )
         progress.finish_step("score")
+
+    def _store_for(self, fallback: JobStore) -> JobStore:
+        """Return this worker thread's own store, or the shared one if serial."""
+        if self._store_factory is None:
+            return fallback
+        store = self._store_factory()
+        assert isinstance(store, JobStore)
+        return store
 
     def _score_one(self, store: JobStore, url: str, description: str) -> None:
         prompt = prompts.score_prompt(

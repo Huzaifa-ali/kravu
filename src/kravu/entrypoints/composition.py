@@ -30,6 +30,7 @@ from kravu.domain.ports import (
 from kravu.services.cover_letter import DraftCoverLetter
 from kravu.services.expand import ExpandJob, PageRenderer
 from kravu.services.explore import ExploreJobs
+from kravu.services.parallel import StoreFactory
 from kravu.services.pipeline import PipelineStep
 from kravu.services.score import ScoreJobFit
 from kravu.services.tailor import TailorResume
@@ -79,16 +80,29 @@ def build_pipeline_steps(
     cover_policy: str,
     searches: dict[str, Any],
     limit: int,
+    *,
+    workers: int = 1,
+    store_factory: StoreFactory | None = None,
 ) -> list[PipelineStep]:
     """Assemble the ordered pipeline steps from constructed adapters.
 
     Explore admits up to ``limit`` new jobs; the remaining steps process all of
-    their pending work.
+    their pending work. ``workers`` and ``store_factory`` parallelize the score
+    step; the serial-safe defaults leave every other step unchanged.
     """
     return [
         PipelineStep("explore", _ExploreStep(ExploreJobs(sources), searches, limit)),
         PipelineStep("expand", ExpandJob(renderer, llm)),
-        PipelineStep("score", ScoreJobFit(llm, profile, min_score)),
+        PipelineStep(
+            "score",
+            ScoreJobFit(
+                llm,
+                profile,
+                min_score,
+                workers=workers,
+                store_factory=store_factory,
+            ),
+        ),
         PipelineStep("tailor", TailorResume(llm, profile, min_score)),
         PipelineStep("cover", DraftCoverLetter(llm, profile, cover_policy, min_score)),
     ]
