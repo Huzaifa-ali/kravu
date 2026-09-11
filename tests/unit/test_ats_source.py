@@ -38,7 +38,7 @@ def test_greenhouse_maps_jobs() -> None:
             }
         }
     }
-    jobs = source.discover(searches)
+    jobs = source.discover(searches, limit=50)
     assert [j.url for j in jobs] == ["https://gh.test/1"]
     assert jobs[0].source == "greenhouse:stripe"
 
@@ -63,7 +63,7 @@ def test_lever_epoch_ms_does_not_crash() -> None:
             "ats": {"enabled": True, "companies": [{"ats": "lever", "slug": "netflix"}]}
         }
     }
-    jobs = source.discover(searches)
+    jobs = source.discover(searches, limit=50)
     assert jobs[0].url == "https://lever.test/1"
 
 
@@ -78,14 +78,14 @@ def test_empty_board_is_recorded_not_crashed() -> None:
             }
         }
     }
-    jobs = source.discover(searches)
+    jobs = source.discover(searches, limit=50)
     assert jobs == []
     assert "greenhouse:typo" in source.notes
 
 
 def test_disabled_ats_returns_empty() -> None:
     source = AtsSource(fetch=_fake_fetch({}))
-    assert source.discover({"sources": {"ats": {"enabled": False}}}) == []
+    assert source.discover({"sources": {"ats": {"enabled": False}}}, limit=50) == []
 
 
 def test_malformed_payload_is_recorded_not_raised() -> None:
@@ -100,7 +100,8 @@ def test_malformed_payload_is_recorded_not_raised() -> None:
             }
         }
     }
-    jobs = source.discover(searches)  # must not raise
+    jobs = source.discover(searches, limit=50)  # must not raise
     assert jobs == []
     assert "greenhouse:bad" in source.notes
     assert source.notes["greenhouse:bad"].startswith("failed")
+
