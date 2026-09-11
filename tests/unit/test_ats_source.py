@@ -104,4 +104,3 @@ def test_malformed_payload_is_recorded_not_raised() -> None:
     assert jobs == []
     assert "greenhouse:bad" in source.notes
     assert source.notes["greenhouse:bad"].startswith("failed")
-

@@ -90,9 +90,7 @@ def build_pipeline_steps(
         PipelineStep("expand", ExpandJob(renderer, llm)),
         PipelineStep("score", ScoreJobFit(llm, profile, min_score)),
         PipelineStep("tailor", TailorResume(llm, profile, min_score)),
-        PipelineStep(
-            "cover", DraftCoverLetter(llm, profile, cover_policy, min_score)
-        ),
+        PipelineStep("cover", DraftCoverLetter(llm, profile, cover_policy, min_score)),
     ]
 
 

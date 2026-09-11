@@ -124,7 +124,9 @@ def test_unknown_site_is_noted_and_skipped(monkeypatch: pytest.MonkeyPatch) -> N
         monkeypatch, {"indeed": [_row("https://i.test/1", "indeed")]}
     )
     source = JobSpySource()
-    jobs = source.discover(_searches(["indeed", "ziprecruiter"]), limit=5)  # typo, not valid
+    jobs = source.discover(
+        _searches(["indeed", "ziprecruiter"]), limit=5
+    )  # typo, not valid
 
     assert len(jobs) == 1
     assert "unsupported" in source.notes[("primary", "ziprecruiter")]

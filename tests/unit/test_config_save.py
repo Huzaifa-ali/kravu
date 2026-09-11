@@ -41,9 +41,7 @@ def test_save_searches_round_trips(kravu_home: Path) -> None:
         "sources": {"jobspy": {"enabled": True, "sites": ["indeed"]}},
         "limit": 100,
         "min_score": 7,
-        "searches": [
-            {"name": "primary", "search_term": "DevOps", "country": "USA"}
-        ],
+        "searches": [{"name": "primary", "search_term": "DevOps", "country": "USA"}],
     }
 
     config.ensure_dirs()

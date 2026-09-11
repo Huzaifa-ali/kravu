@@ -144,4 +144,3 @@ def test_workday_bad_url_recorded_not_raised() -> None:
     jobs = source.discover(searches, limit=50)  # must not raise
     assert jobs == []
     assert any("workday" in key for key in source.notes)
-
