@@ -39,10 +39,10 @@ def test_save_profile_round_trips(kravu_home: Path) -> None:
 def test_save_searches_round_trips(kravu_home: Path) -> None:
     searches = {
         "sources": {"jobspy": {"enabled": True, "sites": ["indeed"]}},
-        "defaults": {"per_run_cap": 25},
+        "limit": 100,
         "min_score": 7,
         "searches": [
-            {"name": "primary", "search_term": "DevOps", "country_indeed": "USA"}
+            {"name": "primary", "search_term": "DevOps", "country": "USA"}
         ],
     }
 

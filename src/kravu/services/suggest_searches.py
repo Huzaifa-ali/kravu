@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from kravu import config
 from kravu.adapters import prompts
 from kravu.adapters.jobspy_source import DEFAULT_SITES, SUPPORTED_SITES
 from kravu.adapters.llm import parse_json
@@ -29,12 +30,7 @@ def _default_searches() -> dict[str, Any]:
             },
             "ats": {"enabled": False, "companies": []},
         },
-        "defaults": {
-            "results_wanted": 25,
-            "hours_old": 168,
-            "description_format": "markdown",
-            "per_run_cap": 25,
-        },
+        "limit": config.DEFAULT_LIMIT,
         "cover_letter": "only_if_required",
         "min_score": 7,
         "searches": [],
@@ -60,7 +56,7 @@ class SuggestSearches:
                 "name": "primary",
                 "search_term": str(data.get("search_term") or "software engineer"),
                 "location": str(data.get("location") or profile.location or "Remote"),
-                "country_indeed": "USA",
+                "country": "USA",
                 "is_remote": bool(data.get("is_remote", True)),
             }
         ]
@@ -93,9 +89,9 @@ def validate_searches(searches: dict[str, Any]) -> None:
 
 
 def _validate_entry(entry: dict[str, Any], needs_country: bool) -> None:
-    if needs_country and not entry.get("country_indeed"):
+    if needs_country and not entry.get("country"):
         raise SearchesConfigError(
-            f"Search '{entry.get('name')}' needs 'country_indeed' "
+            f"Search '{entry.get('name')}' needs 'country' "
             "when indeed/glassdoor is a site."
         )
     chosen = 0
