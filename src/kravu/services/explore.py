@@ -60,24 +60,32 @@ class ExploreJobs:
         self,
         store: JobStore,
         searches: dict[str, Any],
+        limit: int,
         *,
         progress: ProgressReporter = NO_PROGRESS,
     ) -> int:
-        """Discover jobs and persist the new ones.
+        """Discover jobs from all sources, dedupe, and persist up to ``limit`` new.
 
         Args:
             store: The persistence port.
             searches: The parsed ``searches.yaml`` dict.
-            progress: Optional progress sink; advances once per source.
+            limit: The overall run cap — at most this many new jobs are admitted,
+                regardless of how many sources or sites are configured.
+            progress: Optional progress sink; total is ``limit``, advanced once
+                per newly persisted job.
 
         Returns:
-            The number of newly persisted (previously unseen) jobs.
+            The number of newly persisted (previously unseen) jobs (<= limit).
         """
         seen: set[str] = set()
         added = 0
-        progress.start_step("explore", len(self._sources))
+        progress.start_step("explore", limit)
         for source in self._sources:
-            for job in source.discover(searches):
+            if added >= limit:
+                break
+            for job in source.discover(searches, limit):
+                if added >= limit:
+                    break
                 canonical = normalize_url(job.url)
                 if canonical in seen:
                     continue
@@ -85,8 +93,8 @@ class ExploreJobs:
                 job.url = canonical
                 if store.add_discovered(job):
                     added += 1
+                    progress.advance("explore", job.title)
                     if _is_real_description(job.description):
                         store.set_enrichment(canonical, job.description, None)
-            progress.advance("explore", source.name)
         progress.finish_step("explore", f"{added} new jobs")
         return added

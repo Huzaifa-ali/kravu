@@ -112,13 +112,15 @@ def test_explore_reports_progress(repo: JobRepository) -> None:
     class _FakeSource:
         name = "fake"
 
-        def discover(self, searches: dict[str, object]) -> list[Job]:
+        def discover(self, searches: dict[str, object], limit: int) -> list[Job]:
             return [Job(url="https://a.test/x", title="A", description="short")]
 
     reporter = _RecordingReporter()
-    ExploreJobs([_FakeSource()]).run(repo, {"searches": []}, progress=reporter)
+    ExploreJobs([_FakeSource()]).run(
+        repo, {"searches": []}, limit=10, progress=reporter
+    )
 
-    assert any(e.startswith("start:explore") for e in reporter.events)
+    assert "start:explore:10" in reporter.events
     assert "finish:explore" in reporter.events
 
 
