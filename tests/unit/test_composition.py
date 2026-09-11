@@ -14,7 +14,7 @@ class _FakeLLM:
 class _FakeSource:
     name = "fake"
 
-    def discover(self, searches: dict[str, object]) -> list[object]:
+    def discover(self, searches: dict[str, object], limit: int) -> list[object]:
         return []
 
 
@@ -36,21 +36,14 @@ def test_build_pipeline_steps_in_order() -> None:
         min_score=7,
         cover_policy="only_if_required",
         searches={"searches": []},
+        limit=25,
     )
     assert [s.name for s in steps] == ["explore", "expand", "score", "tailor", "cover"]
-    capped = {s.name: s.capped for s in steps}
-    assert capped == {
-        "explore": False,
-        "expand": True,
-        "score": True,
-        "tailor": True,
-        "cover": True,
-    }
 
 
 def test_explore_step_adapts_signature(repo) -> None:  # type: ignore[no-untyped-def]
     # The explore step must accept run(store, limit=None) and not crash when the
-    # pipeline passes limit — it internally calls ExploreJobs.run(store, searches).
+    # pipeline calls it — it internally calls ExploreJobs.run(store, searches, limit).
     steps = build_pipeline_steps(
         sources=[_FakeSource()],
         llm=_FakeLLM(),
@@ -59,6 +52,7 @@ def test_explore_step_adapts_signature(repo) -> None:  # type: ignore[no-untyped
         min_score=7,
         cover_policy="only_if_required",
         searches={"searches": []},
+        limit=25,
     )
     explore_step = steps[0]
     explore_step.use_case.run(repo, None)  # must not raise

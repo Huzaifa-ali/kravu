@@ -21,7 +21,7 @@ _JSONLD = """
 class _Source:
     name = "fake"
 
-    def discover(self, searches: dict[str, object]) -> list[Job]:
+    def discover(self, searches: dict[str, object], limit: int) -> list[Job]:
         return [
             Job(
                 url="https://a.test/1",
@@ -100,8 +100,9 @@ def test_full_pipeline_produces_tailored_shortlist(kravu_home: Path) -> None:
         min_score=7,
         cover_policy="always",
         searches={"searches": []},
+        limit=25,
     )
-    summary = Pipeline(steps, per_run_cap=25).run(store)
+    summary = Pipeline(steps).run(store)
 
     assert all(v == "ok" for v in summary.values())
     shortlist = store.shortlist(7)
