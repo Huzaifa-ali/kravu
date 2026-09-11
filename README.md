@@ -98,7 +98,8 @@ uv run kravu status    # per-step counts + your ranked shortlist
 - **Provider key** — set the variable your model needs (`GEMINI_API_KEY`,
   `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …). Local Ollama models need no key.
 - **Searches** — `~/.kravu/searches.yaml` (created by `kravu init`) defines your
-  keyword searches, sources, fit threshold, cover-letter policy, and per-run cap.
+  keyword searches, sources, fit threshold, cover-letter policy, and `limit` — the
+  number of jobs a run explores and processes.
 - **Data** — everything lives under `~/.kravu/` (SQLite DB, profile, tailored
   materials). Override the location with `KRAVU_HOME`.
 
