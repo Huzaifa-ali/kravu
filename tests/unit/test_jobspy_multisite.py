@@ -53,13 +53,12 @@ def _install_per_site_jobspy(
 def _searches(sites: list[str]) -> dict[str, Any]:
     return {
         "sources": {"jobspy": {"enabled": True, "sites": sites}},
-        "defaults": {"results_wanted": 5},
         "searches": [
             {
                 "name": "primary",
                 "search_term": "AI Engineer",
                 "location": "Remote",
-                "country_indeed": "USA",
+                "country": "USA",
             }
         ],
     }
@@ -97,7 +96,7 @@ def test_one_failing_site_does_not_lose_the_others(
         },
     )
     source = JobSpySource()
-    jobs = source.discover(_searches(["indeed", "zip_recruiter", "glassdoor"]))
+    jobs = source.discover(_searches(["indeed", "zip_recruiter", "glassdoor"]), limit=5)
 
     urls = {j.url for j in jobs}
     assert urls == {"https://i.test/1", "https://g.test/1"}
@@ -113,7 +112,7 @@ def test_per_site_notes_record_outcomes(monkeypatch: pytest.MonkeyPatch) -> None
         },
     )
     source = JobSpySource()
-    source.discover(_searches(["indeed", "zip_recruiter", "glassdoor"]))
+    source.discover(_searches(["indeed", "zip_recruiter", "glassdoor"]), limit=5)
 
     assert source.notes[("primary", "indeed")] == "ok: 1"
     assert "403" in source.notes[("primary", "zip_recruiter")]
@@ -125,7 +124,7 @@ def test_unknown_site_is_noted_and_skipped(monkeypatch: pytest.MonkeyPatch) -> N
         monkeypatch, {"indeed": [_row("https://i.test/1", "indeed")]}
     )
     source = JobSpySource()
-    jobs = source.discover(_searches(["indeed", "ziprecruiter"]))  # typo, not valid
+    jobs = source.discover(_searches(["indeed", "ziprecruiter"]), limit=5)  # typo, not valid
 
     assert len(jobs) == 1
     assert "unsupported" in source.notes[("primary", "ziprecruiter")]
@@ -136,4 +135,4 @@ def test_disabled_jobspy_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     source = JobSpySource()
     searches = _searches(["indeed"])
     searches["sources"]["jobspy"]["enabled"] = False
-    assert source.discover(searches) == []
+    assert source.discover(searches, limit=5) == []
