@@ -41,7 +41,7 @@ def test_build_pipeline_steps_in_order() -> None:
     capped = {s.name: s.capped for s in steps}
     assert capped == {
         "explore": False,
-        "expand": False,
+        "expand": True,
         "score": True,
         "tailor": True,
         "cover": True,
