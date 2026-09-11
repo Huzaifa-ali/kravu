@@ -10,13 +10,43 @@ else keeps it as the preview ``description`` (spec §7a). Persists only new jobs
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from kravu.domain.ports import (
     NO_PROGRESS,
     DiscoverySource,
     JobStore,
     ProgressReporter,
+)
+
+# Query parameters that carry no posting identity — analytics, campaign, and
+# referral tags a board appends to the same job for different visitors. These are
+# dropped during normalization; every OTHER query parameter is kept, because on
+# many boards the posting id lives there (Indeed ``jk``, LinkedIn ``currentJobId``,
+# Greenhouse ``gh_jid``). Stripping the whole query string would collapse every
+# posting on such a board to one URL and admit only a single job per run.
+_TRACKING_PARAMS: frozenset[str] = frozenset(
+    {
+        "utm_source",
+        "utm_medium",
+        "utm_campaign",
+        "utm_term",
+        "utm_content",
+        "utm_id",
+        "gclid",
+        "fbclid",
+        "msclkid",
+        "ref",
+        "referer",
+        "referrer",
+        "source",
+        "src",
+        "from",
+        "trk",
+        "trackingid",
+        "trk_trk",
+        "sc_src",
+    }
 )
 
 _SECTION_SIGNALS = (
@@ -33,13 +63,22 @@ _MIN_REAL_DESCRIPTION = 400
 def normalize_url(url: str) -> str:
     """Return a canonical form of ``url`` for deduplication.
 
-    Lowercases the host, drops the query string and fragment, and strips a
-    trailing slash from the path.
+    Lowercases the host, drops the fragment, strips a trailing slash from the
+    path, and removes only known tracking parameters (``utm_*``, ``gclid``,
+    ``ref``, ...) from the query — keeping identifying parameters like Indeed's
+    ``jk`` or LinkedIn's ``currentJobId`` so distinct postings stay distinct.
+    Remaining query parameters are sorted so ordering never affects the key.
     """
     parsed = urlparse(url)
     host = parsed.netloc.lower()
     path = parsed.path.rstrip("/") or "/"
-    return urlunparse((parsed.scheme.lower(), host, path, "", "", ""))
+    kept = [
+        (key, value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if key.lower() not in _TRACKING_PARAMS
+    ]
+    query = urlencode(sorted(kept))
+    return urlunparse((parsed.scheme.lower(), host, path, "", query, ""))
 
 
 def _is_real_description(text: str) -> bool:

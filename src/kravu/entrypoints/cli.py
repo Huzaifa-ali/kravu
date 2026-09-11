@@ -105,14 +105,21 @@ class RichProgressReporter:
         self._progress.update(task_id, advance=1, detail=detail)
 
     def finish_step(self, name: str, note: str = "") -> None:
-        """Complete ``name``'s bar and record the summary note in the log."""
+        """Mark ``name``'s bar done and record the summary note in the log.
+
+        The bar is left at the count ``advance`` reached (the real number of
+        items processed), then shrunk to that count so it renders as complete
+        without inflating the total. This keeps a bar honest when a step
+        processes fewer items than its cap — e.g. ``explore`` finding 1 job
+        against a limit of 100 reads ``1/1``, never ``100/100``.
+        """
         _LOGGER.info("%s: done%s", name, f" ({note})" if note else "")
         task_id = self._tasks.get(name)
         if task_id is None:
             return
         task = next((t for t in self._progress.tasks if t.id == task_id), None)
-        if task is not None and task.total is not None:
-            self._progress.update(task_id, completed=task.total, detail=note)
+        if task is not None:
+            self._progress.update(task_id, total=task.completed, detail=note)
 
 
 def _progress_columns() -> list[Any]:
@@ -128,11 +135,27 @@ def _progress_columns() -> list[Any]:
 
 
 def _run_pipeline_with_progress(
-    pipeline: Pipeline, store: JobRepository
+    pipeline: Pipeline, store: JobRepository, *, start_from: str | None = None
 ) -> dict[str, str]:
-    """Run the pipeline under a live Rich progress display and return the summary."""
-    with Progress(*_progress_columns(), console=console, transient=False) as progress:
-        return pipeline.run(store, RichProgressReporter(progress))
+    """Run the pipeline under a live Rich progress display and return the summary.
+
+    ``start_from`` scopes the run to that step onward (used by ``resume`` so it
+    never re-runs discovery). A ``KeyboardInterrupt`` (Ctrl+C) stops the run
+    cleanly: the progress display is torn down by the ``with`` block and a short
+    message is printed, rather than leaving a half-rendered bar or a traceback.
+    """
+    try:
+        with Progress(
+            *_progress_columns(), console=console, transient=False
+        ) as progress:
+            return pipeline.run(
+                store, RichProgressReporter(progress), start_from=start_from
+            )
+    except KeyboardInterrupt:
+        console.print(
+            "\n[yellow]Interrupted. Re-run to resume where it stopped.[/yellow]"
+        )
+        raise typer.Exit(code=130) from None
 
 
 def _load_profile() -> Profile:
@@ -392,7 +415,9 @@ def resume(step: str) -> None:
     reset = store.reset_step_for_retry(step)
     console.print(f"Reset {reset} job(s) at '{step}'.")
     sources = _sources()
-    summary = _run_pipeline_with_progress(_pipeline(profile, searches, sources), store)
+    summary = _run_pipeline_with_progress(
+        _pipeline(profile, searches, sources), store, start_from=step
+    )
     _log_source_notes(sources)
     for name, status in summary.items():
         console.print(f"{name}: {status}")

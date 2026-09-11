@@ -24,6 +24,35 @@ def test_normalize_url_strips_tracking_and_lowercases_host() -> None:
     assert a == b
 
 
+def test_normalize_url_keeps_identifying_query_param() -> None:
+    """Indeed-style URLs differ only by ``jk`` — they must stay distinct."""
+    a = normalize_url("https://www.indeed.com/viewjob?jk=abc123")
+    b = normalize_url("https://www.indeed.com/viewjob?jk=def456")
+    assert a != b
+
+
+def test_normalize_url_drops_only_tracking_around_identifier() -> None:
+    """Tracking params fall away; the posting id is preserved and canonical."""
+    a = normalize_url("https://www.indeed.com/viewjob?jk=abc123&utm_source=x")
+    b = normalize_url("https://www.indeed.com/viewjob?jk=abc123")
+    assert a == b
+
+
+def test_explore_admits_indeed_jobs_that_differ_only_by_jk(
+    repo: JobRepository,
+) -> None:
+    """Regression: 100 Indeed results collapsed to 1 when the query was dropped."""
+    source = _FakeSource(
+        [
+            Job(url=f"https://www.indeed.com/viewjob?jk={jk}", title="Dev")
+            for jk in ("a1", "b2", "c3")
+        ]
+    )
+    added = ExploreJobs([source]).run(repo, {"searches": []}, limit=100)
+    assert added == 3
+    assert repo.stats()["total"] == 3
+
+
 def test_explore_dedupes_by_normalized_url(repo: JobRepository) -> None:
     source = _FakeSource(
         [
