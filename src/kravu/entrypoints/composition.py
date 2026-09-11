@@ -88,7 +88,7 @@ def build_pipeline_steps(
 
     Explore admits up to ``limit`` new jobs; the remaining steps process all of
     their pending work. ``workers`` and ``store_factory`` parallelize the score
-    step; the serial-safe defaults leave every other step unchanged.
+    and cover steps; the serial-safe defaults leave every other step unchanged.
     """
     return [
         PipelineStep("explore", _ExploreStep(ExploreJobs(sources), searches, limit)),
@@ -104,7 +104,17 @@ def build_pipeline_steps(
             ),
         ),
         PipelineStep("tailor", TailorResume(llm, profile, min_score)),
-        PipelineStep("cover", DraftCoverLetter(llm, profile, cover_policy, min_score)),
+        PipelineStep(
+            "cover",
+            DraftCoverLetter(
+                llm,
+                profile,
+                cover_policy,
+                min_score,
+                workers=workers,
+                store_factory=store_factory,
+            ),
+        ),
     ]
 
 
