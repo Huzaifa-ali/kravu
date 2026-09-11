@@ -28,7 +28,7 @@ from kravu.domain.ports import (
     ProgressReporter,
 )
 from kravu.services.cover_letter import DraftCoverLetter
-from kravu.services.expand import ExpandJob, PageRenderer
+from kravu.services.expand import ExpandJob, PageRenderer, RendererFactory
 from kravu.services.explore import ExploreJobs
 from kravu.services.parallel import StoreFactory
 from kravu.services.pipeline import PipelineStep
@@ -83,6 +83,7 @@ def build_pipeline_steps(
     *,
     workers: int = 1,
     store_factory: StoreFactory | None = None,
+    renderer_factory: RendererFactory | None = None,
 ) -> list[PipelineStep]:
     """Assemble the ordered pipeline steps from constructed adapters.
 
@@ -92,7 +93,16 @@ def build_pipeline_steps(
     """
     return [
         PipelineStep("explore", _ExploreStep(ExploreJobs(sources), searches, limit)),
-        PipelineStep("expand", ExpandJob(renderer, llm)),
+        PipelineStep(
+            "expand",
+            ExpandJob(
+                renderer,
+                llm,
+                workers=workers,
+                store_factory=store_factory,
+                renderer_factory=renderer_factory,
+            ),
+        ),
         PipelineStep(
             "score",
             ScoreJobFit(

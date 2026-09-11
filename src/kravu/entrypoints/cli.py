@@ -227,6 +227,7 @@ def _pipeline(
         limit=limit,
         workers=4,  # TODO(Task 6): replace with resolved config.workers()
         store_factory=JobRepository,
+        renderer_factory=PlaywrightPageRenderer,
     )
     return Pipeline(steps)
 
