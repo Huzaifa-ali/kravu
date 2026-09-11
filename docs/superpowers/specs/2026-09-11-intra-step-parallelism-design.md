@@ -213,6 +213,36 @@ The repository's *code* does not change; what changes is that it is now
 **constructed per worker thread** rather than once and shared. That distinction is
 the whole point of this section.
 
+### 4.7 `expand` needs a renderer factory too (same shape, slice 5)
+
+`ExpandJob` receives a `PageRenderer`, and `cli.py` builds one
+`PlaywrightPageRenderer` at the edge and injects it — so under parallel `expand`,
+all workers would share one renderer instance. The default render function opens
+its own `sync_playwright()` per call, but Playwright's sync API is not designed to
+be driven from multiple threads through a shared object, and any stateful injected
+renderer would be unsafe to share.
+
+Resolution mirrors the store: `ExpandJob` takes a **`renderer_factory:
+Callable[[], PageRenderer]`** (default wired in `cli.py` as
+`PlaywrightPageRenderer`), and each worker obtains its own renderer via the
+factory inside `work(job)`. If per-thread Playwright launches prove too heavy,
+`expand` may ship with a smaller default worker count than the LLM steps (§9). This
+makes slice 5 explicitly larger than the LLM slices: helper adoption **plus** a
+renderer factory.
+
+### 4.8 Not breaking existing wiring & tests
+
+Two existing tests pin signatures that this change touches, so the additions must
+be backward-compatible:
+- `tests/e2e/test_full_pipeline.py` and `tests/unit/test_composition.py` call
+  `build_pipeline_steps(...)` with a fixed keyword set. New parameters
+  (`workers`, `store_factory`, `renderer_factory`) must be **keyword-only with
+  defaults** so these calls keep compiling and running unchanged (default =
+  serial, `workers=1`).
+- `tests/unit/test_progress.py` asserts exact `advance` counts (e.g. `== 2`). The
+  thread-safe-progress lock (§4.3) must not change how many times `advance` is
+  called — these tests are the regression guard that it doesn't.
+
 ## 5. Determinism & principles
 
 Parallelism changes *when* work happens, never *what* the outcome is:
@@ -276,7 +306,7 @@ This keeps us from building rate-limit machinery nobody has yet needed.
 | 2 | Adopt in **`score`** (inject `workers` + `store_factory`; wire `store_factory=JobRepository` in composition/CLI) | Simplest: one LLM call, no browser; first real store-per-thread use | Parametrized workers=1/4 identical scores; no cross-thread error |
 | 3 | Adopt in **`cover`** | Same shape as score | Parametrized workers=1/4 identical decisions |
 | 4 | Adopt in **`tailor`** | More parts (draft+judge+retry) but self-contained | Parametrized + fabrication guard intact |
-| 5 | Adopt in **`expand`** | **Last** — Playwright thread-safety is the one unknown (likely one browser context per worker, or a small renderer pool) | Test + explicit Playwright concurrency check |
+| 5 | Adopt in **`expand`** (+ renderer factory — see §4.7) | **Last** — Playwright thread-safety is the one unknown; needs a *renderer factory* so each worker gets its own renderer, mirroring the store factory | Test + explicit Playwright concurrency check |
 | 6 | `--workers` flag + `config.workers()` + optional `searches.yaml` key | Expose the knob once steps support it | CLI + config unit tests |
 
 The `store_factory` plumbing lands in slice 2 (with `score`, the first
@@ -291,11 +321,11 @@ infrastructure with no wiring.
   is unsafe under threads. Mitigated by the store-factory: each worker constructs
   its own repository → its own WAL connection. This is the single most important
   correctness item and is addressed from the first parallelized slice.
-- **Playwright thread-safety (slice 5).** A single Playwright browser/page is not
-  safe to share across threads. Mitigation: give each worker its own browser
-  context (or pool contexts). This is why `expand` is sequenced last and gets a
-  dedicated concurrency check; if it proves costly, `expand` can ship with a
-  lower default worker count than the LLM steps.
+- **Playwright thread-safety (slice 5).** A single shared renderer is not safe to
+  drive from multiple threads. Mitigation: a renderer factory (§4.7) so each
+  worker gets its own renderer. This is why `expand` is sequenced last and gets a
+  dedicated concurrency check; if per-thread launches prove costly, `expand` can
+  ship with a lower default worker count than the LLM steps.
 - **Free-tier 429s.** Mitigated by the modest default and the deferred-backoff
   plan (§7).
 - **Progress races.** Mitigated by the lock (§4.3), covered by a test.
@@ -309,5 +339,7 @@ infrastructure with no wiring.
 - Measurable wall-clock reduction on `score`/`tailor`/`cover`/`expand` at
   `workers=4` vs `workers=1` on a representative batch.
 - Identical pipeline outputs at any worker count (proven by parametrized tests).
-- `mypy --strict`, `ruff`, and the full `pytest` suite pass.
+- `mypy` (strict, configured in `pyproject.toml`), `ruff format --check`,
+  `ruff check`, and the full `pytest` suite pass on Python 3.11 and 3.12 (the CI
+  matrix), run via `uv run`.
 - No change to determinism, fault-tolerance, or the no-fabrication guarantees.
