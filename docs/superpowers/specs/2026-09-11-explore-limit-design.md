@@ -1,4 +1,4 @@
-# Explore Limit + Internal Attempts + Generic `country` — Design
+# Explore Limit, Attempt Budgets, and `country` — Design
 
 **Date:** 2026-09-11
 **Branch:** `feat/explore-limit`
@@ -6,32 +6,10 @@
 
 ## Goal
 
-Make the number of jobs a run handles a single, honest, user-facing number
-(`limit`). Remove the internal throttle knobs (`per_run_cap`, `results_wanted`)
-from user config, move the retry budget into `config.py` as an internal constant,
-and rename the board-coupled `country_indeed` search field to a generic `country`.
-
-## Problem
-
-The current design has three related problems:
-
-1. **Explore is uncapped, downstream is capped.** `per_run_cap` (default 100)
-   gates the LLM/render steps (`expand`, `score`, `tailor`, `cover`) but *not*
-   `explore` (built `capped=False`, and `_ExploreStep` ignores `limit`). So a run
-   can discover ~200 jobs (1 search × 2 sites × `results_wanted: 100`) yet only
-   process 100 — the surplus silently becomes backlog. The number the user cares
-   about (how many jobs enter the pipeline) is unbounded and unpredictable.
-
-2. **Two confusingly-named internal knobs leak into business meaning.**
-   `results_wanted` (JobSpy per-board fetch hint) and `per_run_cap` (LLM spend
-   throttle) both default to 100, both live under `defaults:`, and neither is a
-   concept the user should reason about. Using `per_run_cap` to bound intake turns
-   an internal throttle into a business rule — the wrong place for it.
-
-3. **`country_indeed` is board-coupled naming.** It reads as "a setting only for
-   Indeed." The concept (which country to search) is generic; only the name (and
-   the fact JobSpy's API calls it `country_indeed`) is board-specific. That
-   adapter detail leaked into the user's config vocabulary.
+Give a run a single, honest, user-facing number — `limit` — that says how many
+jobs it explores and processes. Keep attempt/retry budgets as named internal
+constants in `config.py`. Use a generic `country` field on each search, with the
+JobSpy adapter supplying the board-specific request parameter it needs.
 
 ## The contract (source of truth)
 
@@ -39,24 +17,21 @@ The current design has three related problems:
 - User sets `limit: 100` → explore admits up to **100 new (deduped) jobs** into
   the pipeline this run. `limit` is the **overall run total**, independent of how
   many sources or sites are configured (never per-source, never per-site).
-- **Every downstream step processes that full set** — no per-step business cap.
-  If 90% survive scoring, apply operates on those ~90. The funnel narrows by real
-  outcomes (fit score, cover policy), never by a hidden throttle.
-- `limit` **also drives how many JobSpy fetches per board internally**, so a run
-  can actually reach the number the user set (JobSpy's own default fetch is ~15,
-  which would starve `limit: 100`).
-- **Retry/attempt budget** is an internal constant in `config.py`
-  (`MAX_ATTEMPTS = 3`), replacing the scattered hardcoded `< 3`. Not in yaml/env.
-- The search field **`country_indeed` is renamed to `country`**; the JobSpy
-  adapter translates `country` → JobSpy's `country_indeed` param internally.
-  `country` is **always required** on a search entry (validation + error message
-  use `country`).
-- `hours_old` and `description_format` are **unchanged** (they are genuine search
-  params, fine as they are).
-- **Progress bar:** no hierarchy for now. The explore bar simply gets an honest
-  denominator (`limit`) instead of `len(sources)`. That fixes the `0/2` confusion
-  (`0/1` when only JobSpy is enabled is a non-issue because the total is now
-  `limit`, not the source count).
+- **Every downstream step processes that full set.** There is no per-step
+  business cap. If 90% survive scoring, apply operates on those ~90. The funnel
+  narrows by real outcomes (fit score, cover policy), not by a throttle.
+- `limit` also bounds how many results each board is asked for, so a run can
+  actually reach the number the user set (a board's own default fetch is small
+  and would otherwise starve `limit`).
+- **Attempt budgets are internal constants** in `config.py`, not user config.
+  They are per-phase (see below) and never appear in `searches.yaml` or env.
+- Each search entry has a generic **`country`** field, always required. The
+  JobSpy adapter uses it to supply the country request parameter that Indeed and
+  Glassdoor require.
+- `hours_old` and `description_format` remain genuine search parameters, carried
+  per search / per run as today.
+- **Progress bar:** flat (no hierarchy). The explore bar's total is `limit`, and
+  it advances once per newly persisted job — an honest denominator.
 
 ## Resulting `searches.yaml`
 
@@ -83,7 +58,7 @@ sources:
 
 ## Behavior details
 
-### Explore cap enforcement — `limit` is the overall run total
+### `limit` is the overall run total
 
 `limit` is the **total number of jobs a run admits, independent of how many
 sources or sites are configured.** `limit: 100` means 100 jobs this run — never
@@ -93,72 +68,112 @@ Enforcement is **gather-then-cap** (no source is privileged by position):
 `ExploreJobs.run` gathers results from **all** enabled sources, dedupes the full
 union by normalized URL, then admits the **first `limit`** new jobs. Iteration
 order within the gathered union is deterministic, so the outcome is reproducible;
-no source wins simply because it ran first. Idempotent: jobs not admitted this run
-are not persisted and are rediscovered next run.
+no source wins simply because it ran first. Idempotent: jobs not admitted this
+run are not persisted and are rediscovered next run.
 
 The explore progress total is `limit`; `advance` is called once per **newly
 persisted** job (so the bar reflects real intake, not source ticks).
 
-### JobSpy fetch count from `limit` (internal fetch ceiling)
+### `limit` bounds each board's fetch
 
-JobSpy's own default per-board fetch is small (~15), which would starve
-`limit: 100`. So explore passes the run `limit` down as the per-board fetch
-**ceiling**: each enabled board is asked for **up to `limit`** results
-(replacing the `results_wanted` passthrough). This is *not* "limit per board" —
-it is an upper request bound so that a single productive board can fill the whole
-`limit` when other boards return empty/403. Over-fetching across multiple sites is
-harmless: `ExploreJobs` dedupes the union and enforces the real overall `limit` at
-persist time.
+A board's own default fetch is small and would starve `limit`. So `limit` is
+threaded to the discovery sources as the per-board fetch ceiling: each enabled
+board is asked for **up to `limit`** results. This is *not* "limit per board" —
+it is an upper request bound so a single productive board can fill the whole
+`limit` when other boards return empty or are blocked. Over-fetching across
+several boards is harmless: `ExploreJobs` dedupes the union and enforces the real
+overall `limit` when persisting.
 
-### Downstream steps uncapped
+To pass `limit` cleanly, the `DiscoverySource` port carries it as an explicit
+argument:
 
-`Pipeline` no longer holds a `per_run_cap`. Explore is the only step that takes a
-`limit`; `expand`/`score`/`tailor`/`cover` process all their pending rows. The
-`capped` flag on `PipelineStep` is removed.
+```python
+def discover(self, searches: dict[str, object], limit: int) -> list[Job]: ...
+```
 
-### Attempts constant
+Both adapters (`JobSpySource`, `AtsSource`) and every test fake implement this
+signature. `JobSpySource` uses `limit` as the per-board fetch count. `AtsSource`
+returns whole boards regardless of `limit` (an ATS board is not a keyword search
+with a result count); the overall cap is still enforced by `ExploreJobs`.
 
-`config.MAX_ATTEMPTS = 3` is the single retry budget. `repository.py`'s
-`pending_enrichment` (and any other `< 3` retry gate) references it instead of a
-literal. Behavior is unchanged (still 3); the value just has one home.
+### `country` on a search entry
+
+Each search entry carries a generic `country` field (e.g. `USA`). `JobSpySource`
+reads `country` and supplies it as the country request parameter that JobSpy's
+Indeed and Glassdoor scrapers require. `country` is **always required** on a
+search entry; `validate_searches` raises `SearchesConfigError` naming `country`
+when it is missing.
+
+### Downstream steps process all pending work
+
+`Pipeline` sequences the steps and threads the progress reporter; it holds no
+run cap. Explore is the only step that receives `limit`. `expand`, `score`,
+`tailor`, and `cover` each process every pending row the store returns for them.
+
+### Attempt budgets (internal, per-phase)
+
+Retry budgets live as named constants in `config.py` and back the repository's
+`pending_*` retry gates. They are per-phase:
+
+```python
+ENRICH_MAX_ATTEMPTS = 3
+TAILOR_MAX_ATTEMPTS = 5
+COVER_MAX_ATTEMPTS = 5
+APPLY_MAX_ATTEMPTS = 3
+```
+
+Tailor and cover allow more attempts than enrich and apply because the
+no-fabrication guards (`principles.md` §"Never fabricate") can legitimately
+reject and retry a generation several times before it passes. The repository
+references these constants in `pending_enrichment`, `pending_tailoring`,
+`pending_cover`, and `pending_apply` instead of inline numbers.
 
 ## Files touched
 
 | File | Change |
 |------|--------|
-| `services/explore.py` | Accept `limit`; admit up to `limit` new jobs (deterministic); progress total = `limit`, advance per persisted job; pass fetch count to sources. |
-| `adapters/jobspy_source.py` | Fetch count from `limit` (drop `results_wanted` passthrough); map `country` → `country_indeed`. |
-| `services/pipeline.py` | Remove `per_run_cap` and `capped`; explore carries `limit`; downstream uncapped. |
-| `entrypoints/composition.py` | Drop `capped`; explore step carries `limit`; wire fetch count. |
-| `config.py` | Add `MAX_ATTEMPTS = 3`; add `limit` resolution (`KRAVU_LIMIT` env fallback + default); remove `per_run_cap`/`results_wanted` defaults. |
-| `adapters/repository.py` | Replace hardcoded `< 3` with `config.MAX_ATTEMPTS`. |
-| `services/suggest_searches.py` | `country_indeed` → `country` in generation + `_validate_entry`. |
-| `entrypoints/cli.py` | Resolve `limit`; feed explore; drop `per_run_cap` wiring. |
+| `domain/ports.py` | `DiscoverySource.discover` gains a `limit: int` argument. |
+| `services/explore.py` | `run(store, searches, limit, *, progress)`; gather all enabled sources with `limit`, dedupe, admit up to `limit` new jobs; progress total = `limit`, advance per persisted job. |
+| `adapters/jobspy_source.py` | `discover(searches, limit)`; use `limit` as the per-board fetch count; read each search entry's `country` and supply it as JobSpy's country request parameter. |
+| `adapters/ats_source.py` | `discover(searches, limit)` (accepts `limit`; returns whole boards). |
+| `services/pipeline.py` | `Pipeline(steps)` holds no cap; steps run their pending work; `PipelineStep` has no `capped` field. |
+| `entrypoints/composition.py` | Build steps without a cap; explore step carries `limit`. |
+| `config.py` | Add `ENRICH_MAX_ATTEMPTS=3`, `TAILOR_MAX_ATTEMPTS=5`, `COVER_MAX_ATTEMPTS=5`, `APPLY_MAX_ATTEMPTS=3`; add `limit()` resolution (`KRAVU_LIMIT` env, default 100). |
+| `adapters/repository.py` | `pending_enrichment`/`pending_tailoring`/`pending_cover`/`pending_apply` reference the `config` attempt constants. |
+| `services/suggest_searches.py` | Generated config uses `limit`, `country`; `_default_searches` has no `defaults` throttle block; `_validate_entry` requires `country`. |
+| `entrypoints/cli.py` | Resolve `limit` from `searches.yaml`/env; build the pipeline and pass `limit` to explore. |
 | `.kravu/searches.yaml` | New shape (above). |
-| `tests/**` | Explore-cap test; attempts-constant test; update pipeline/progress/jobspy/config/suggest tests to new contract. |
-| `.kiro/steering/*` + `README.md` | Update to reflect single `limit`, internal attempts, `country`. |
+| `tests/unit/test_explore*.py` | Overall-cap test; single-source-fills-limit test. |
+| `tests/unit/test_config_*.py` | `limit()` resolution; attempt constants. |
+| `tests/unit/test_pipeline.py`, `test_progress.py` | `Pipeline(steps)` signature; explore total = `limit`; no `capped`. |
+| `tests/unit/test_jobspy_source.py`, `test_jobspy_multisite.py` | `discover(searches, limit)`; `country` field; fetch count = `limit`. |
+| `tests/unit/test_suggest_searches.py`, `test_config_save.py` | New config shape; `country`; no throttle block. |
+| `tests/e2e/test_full_pipeline.py` | `Pipeline(steps)` + explore `limit` wiring. |
+| `.kiro/steering/*`, `README.md` | Describe the single `limit`, per-phase attempt constants, and `country`. |
 
 ## Testing strategy (TDD)
 
-- **Explore cap (overall total):** given multiple enabled sources returning more
-  than `limit` unique jobs combined, exactly `limit` are persisted; the surplus is
-  not. `limit` is the total across all sources, not per-source. Deterministic
-  (gather-then-cap; no source privileged by order).
-- **Explore reaches limit from one source:** a single productive board can fill
-  the whole `limit` (fetch ceiling = `limit` per board).
+- **Explore overall cap:** two enabled sources returning more than `limit` unique
+  jobs combined → exactly `limit` persisted; surplus not. Deterministic
+  (gather-then-cap).
+- **Single source fills limit:** one productive board asked for `limit` fills the
+  whole `limit`.
+- **Fetch ceiling:** `JobSpySource.discover(searches, limit)` asks each board for
+  `limit` results (assert the fetch kwarg equals `limit`).
 - **Progress:** explore reports `start:explore:<limit>` and advances once per
   persisted job.
-- **Attempts constant:** `config.MAX_ATTEMPTS == 3`; `pending_enrichment` respects
-  it (a job with `MAX_ATTEMPTS` attempts is excluded).
-- **country rename:** `suggest_searches` emits `country`; `_validate_entry`
-  requires `country` and its error message names `country`; JobSpy maps `country`
-  → `country_indeed`.
-- **Pipeline:** no `per_run_cap`; downstream steps process all pending.
-- All unit tests offline/deterministic; LLM + network mocked.
+- **Attempt constants:** `config.ENRICH_MAX_ATTEMPTS == 3`,
+  `TAILOR_MAX_ATTEMPTS == 5`, `COVER_MAX_ATTEMPTS == 5`, `APPLY_MAX_ATTEMPTS == 3`;
+  each `pending_*` gate excludes a job at its budget and includes one below it.
+- **`country`:** `suggest_searches` emits `country`; `validate_searches` raises
+  naming `country` when absent; `JobSpySource` supplies it to the scraper.
+- **Pipeline:** `Pipeline(steps)` runs each step over its pending work; explore
+  receives `limit`.
+- All unit tests offline and deterministic; LLM and network mocked.
 
 ## Out of scope
 
-- Progress hierarchy / per-source live counts (deferred).
-- Any change to `hours_old`, `description_format`, cover policy, min_score.
-- ATS enablement behavior (still off by default).
-- Non-US country inference (country stays explicit and required).
+- Progress hierarchy / per-source live counts.
+- Any change to `hours_old`, `description_format`, cover policy, `min_score`.
+- ATS enablement behavior (off by default).
+- Country inference (it stays explicit and required).
