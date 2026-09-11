@@ -93,8 +93,9 @@ def discover(self, searches: dict[str, object], limit: int) -> list[Job]: ...
 
 Both adapters (`JobSpySource`, `AtsSource`) and every test fake implement this
 signature. `JobSpySource` uses `limit` as the per-board fetch count. `AtsSource`
-returns whole boards regardless of `limit` (an ATS board is not a keyword search
-with a result count); the overall cap is still enforced by `ExploreJobs`.
+pulls its configured company boards in order and returns at most `limit` jobs.
+The overall cap is still enforced by `ExploreJobs` after dedup, but every source
+honors `limit` itself rather than returning whole boards.
 
 ### `country` on a search entry
 
@@ -135,7 +136,7 @@ references these constants in `pending_enrichment`, `pending_tailoring`,
 | `domain/ports.py` | `DiscoverySource.discover` gains a `limit: int` argument. |
 | `services/explore.py` | `run(store, searches, limit, *, progress)`; gather all enabled sources with `limit`, dedupe, admit up to `limit` new jobs; progress total = `limit`, advance per persisted job. |
 | `adapters/jobspy_source.py` | `discover(searches, limit)`; use `limit` as the per-board fetch count; read each search entry's `country` and supply it as JobSpy's country request parameter. |
-| `adapters/ats_source.py` | `discover(searches, limit)` (accepts `limit`; returns whole boards). |
+| `adapters/ats_source.py` | `discover(searches, limit)`; pull company boards in order, return at most `limit` jobs. |
 | `services/pipeline.py` | `Pipeline(steps)` holds no cap; steps run their pending work; `PipelineStep` has no `capped` field. |
 | `entrypoints/composition.py` | Build steps without a cap; explore step carries `limit`. |
 | `config.py` | Add `ENRICH_MAX_ATTEMPTS=3`, `TAILOR_MAX_ATTEMPTS=5`, `COVER_MAX_ATTEMPTS=5`, `APPLY_MAX_ATTEMPTS=3`; add `limit()` resolution (`KRAVU_LIMIT` env, default 100). |
@@ -149,7 +150,7 @@ references these constants in `pending_enrichment`, `pending_tailoring`,
 | `tests/unit/test_jobspy_source.py`, `test_jobspy_multisite.py` | `discover(searches, limit)`; `country` field; fetch count = `limit`. |
 | `tests/unit/test_suggest_searches.py`, `test_config_save.py` | New config shape; `country`; no throttle block. |
 | `tests/e2e/test_full_pipeline.py` | `Pipeline(steps)` + explore `limit` wiring. |
-| `.kiro/steering/*`, `README.md` | Describe the single `limit`, per-phase attempt constants, and `country`. |
+| `.kiro/steering/*`, `README.md` | Describe the single `limit`, per-phase attempt constants, and `country`. Remove the outdated migration note in `component-design.md`. |
 
 ## Testing strategy (TDD)
 
@@ -158,6 +159,8 @@ references these constants in `pending_enrichment`, `pending_tailoring`,
   (gather-then-cap).
 - **Single source fills limit:** one productive board asked for `limit` fills the
   whole `limit`.
+- **ATS honors limit:** `AtsSource.discover(searches, limit)` returns at most
+  `limit` jobs across its configured boards.
 - **Fetch ceiling:** `JobSpySource.discover(searches, limit)` asks each board for
   `limit` results (assert the fetch kwarg equals `limit`).
 - **Progress:** explore reports `start:explore:<limit>` and advances once per
