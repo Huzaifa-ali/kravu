@@ -9,6 +9,7 @@ injected into the use cases via the composition helpers.
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -89,20 +90,23 @@ class RichProgressReporter:
         """Store the live ``Progress`` instance and the per-step task registry."""
         self._progress = progress
         self._tasks: dict[str, TaskID] = {}
+        self._lock = threading.Lock()
 
     def start_step(self, name: str, total: int) -> None:
         """Add (or reset) a bar for ``name`` sized to ``total`` items."""
         _LOGGER.info("%s: starting (%d items)", name, total)
-        self._tasks[name] = self._progress.add_task(
-            f"{name}", total=max(total, 1), detail=""
-        )
+        with self._lock:
+            self._tasks[name] = self._progress.add_task(
+                f"{name}", total=max(total, 1), detail=""
+            )
 
     def advance(self, name: str, detail: str = "") -> None:
         """Advance ``name`` by one item and show ``detail`` as the trailing label."""
-        task_id = self._tasks.get(name)
-        if task_id is None:
-            return
-        self._progress.update(task_id, advance=1, detail=detail)
+        with self._lock:
+            task_id = self._tasks.get(name)
+            if task_id is None:
+                return
+            self._progress.update(task_id, advance=1, detail=detail)
 
     def finish_step(self, name: str, note: str = "") -> None:
         """Mark ``name``'s bar done and record the summary note in the log.
@@ -114,12 +118,13 @@ class RichProgressReporter:
         against a limit of 100 reads ``1/1``, never ``100/100``.
         """
         _LOGGER.info("%s: done%s", name, f" ({note})" if note else "")
-        task_id = self._tasks.get(name)
-        if task_id is None:
-            return
-        task = next((t for t in self._progress.tasks if t.id == task_id), None)
-        if task is not None:
-            self._progress.update(task_id, total=task.completed, detail=note)
+        with self._lock:
+            task_id = self._tasks.get(name)
+            if task_id is None:
+                return
+            task = next((t for t in self._progress.tasks if t.id == task_id), None)
+            if task is not None:
+                self._progress.update(task_id, total=task.completed, detail=note)
 
 
 def _progress_columns() -> list[Any]:
@@ -205,8 +210,20 @@ def _resolve_limit(searches: dict[str, Any]) -> int:
     return config.limit()
 
 
+def _resolve_workers(searches: dict[str, Any], override: int | None) -> int:
+    """Workers from --workers, else searches.yaml, else KRAVU_WORKERS/default."""
+    if override is not None:
+        return max(1, override)
+    if "workers" in searches:
+        return max(1, int(searches["workers"]))
+    return config.workers()
+
+
 def _pipeline(
-    profile: Profile, searches: dict[str, Any], sources: list[DiscoverySource]
+    profile: Profile,
+    searches: dict[str, Any],
+    sources: list[DiscoverySource],
+    workers: int,
 ) -> Pipeline:
     min_score = _resolve_min_score(searches)
     cover_policy = _resolve_cover_policy(searches)
@@ -220,6 +237,9 @@ def _pipeline(
         cover_policy=cover_policy,
         searches=searches,
         limit=limit,
+        workers=workers,
+        store_factory=JobRepository,
+        renderer_factory=PlaywrightPageRenderer,
     )
     return Pipeline(steps)
 
@@ -368,7 +388,11 @@ def _show_searches(searches: dict[str, Any]) -> None:
 
 
 @app.command()
-def run() -> None:
+def run(
+    workers: int | None = typer.Option(
+        None, help="Concurrent workers per step (default: KRAVU_WORKERS or 4)."
+    ),
+) -> None:
     """Run the full pipeline over all outstanding work."""
     config.load_env()
     _configure_logging()
@@ -389,7 +413,10 @@ def run() -> None:
     searches = config.load_searches()
     store = JobRepository()
     sources = _sources()
-    summary = _run_pipeline_with_progress(_pipeline(profile, searches, sources), store)
+    resolved = _resolve_workers(searches, workers)
+    summary = _run_pipeline_with_progress(
+        _pipeline(profile, searches, sources, resolved), store
+    )
     _log_source_notes(sources)
     for name, status in summary.items():
         console.print(f"{name}: {status}")
@@ -397,7 +424,12 @@ def run() -> None:
 
 
 @app.command()
-def resume(step: str) -> None:
+def resume(
+    step: str,
+    workers: int | None = typer.Option(
+        None, help="Concurrent workers per step (default: KRAVU_WORKERS or 4)."
+    ),
+) -> None:
     """Retry a step's pending/failed jobs, then flow forward."""
     if step not in _STEPS:
         console.print(f"Unknown step '{step}'. Choose from {', '.join(_STEPS)}.")
@@ -415,8 +447,9 @@ def resume(step: str) -> None:
     reset = store.reset_step_for_retry(step)
     console.print(f"Reset {reset} job(s) at '{step}'.")
     sources = _sources()
+    resolved = _resolve_workers(searches, workers)
     summary = _run_pipeline_with_progress(
-        _pipeline(profile, searches, sources), store, start_from=step
+        _pipeline(profile, searches, sources, resolved), store, start_from=step
     )
     _log_source_notes(sources)
     for name, status in summary.items():

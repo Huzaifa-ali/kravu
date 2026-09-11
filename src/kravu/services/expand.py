@@ -11,11 +11,13 @@ job is marked pending (non-fatal) and keeps its preview description.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from typing import Protocol
 
 from kravu import config
 from kravu.adapters import prompts
 from kravu.domain.ports import NO_PROGRESS, JobStore, LLMClient, ProgressReporter
+from kravu.services.parallel import StoreFactory, run_parallel
 
 _MAX_ATTEMPTS = config.ENRICH_MAX_ATTEMPTS
 _MIN_EXTRACT_LEN = 200
@@ -27,6 +29,15 @@ class PageRenderer(Protocol):
     def render(self, url: str) -> str:
         """Return the fully-rendered HTML of ``url``."""
         ...
+
+
+RendererFactory = Callable[[], PageRenderer]
+"""Factory that builds a fresh per-worker page renderer.
+
+Unlike the store, the renderer is also shared-once-injected, so under
+parallelism each worker thread needs its OWN renderer (spec §4.7). ``None``
+keeps the shared renderer (serial-safe default).
+"""
 
 
 def extract_jsonld(html: str) -> str | None:
@@ -82,10 +93,34 @@ def flatten_html(html: str) -> str:
 class ExpandJob:
     """Enrich jobs with a full description via the extraction cascade."""
 
-    def __init__(self, renderer: PageRenderer, llm: LLMClient) -> None:
-        """Store the injected page renderer and model port."""
+    def __init__(
+        self,
+        renderer: PageRenderer,
+        llm: LLMClient,
+        *,
+        workers: int = 1,
+        store_factory: StoreFactory | None = None,
+        renderer_factory: RendererFactory | None = None,
+    ) -> None:
+        """Store the injected page renderer and model port.
+
+        Args:
+            renderer: The shared page renderer used when running serially.
+            llm: The model port used by the LLM extraction tier.
+            workers: Degree of concurrency for per-job enrichment (``<= 1``
+                serial).
+            store_factory: Builds a fresh per-thread store when running in
+                parallel; each worker thread must use its own SQLite connection.
+                ``None`` keeps the shared store (serial-safe default).
+            renderer_factory: Builds a fresh per-thread renderer when running in
+                parallel; the renderer is shared-once-injected, so each worker
+                needs its own. ``None`` keeps the shared renderer.
+        """
         self._renderer = renderer
         self._llm = llm
+        self._workers = workers
+        self._store_factory = store_factory
+        self._renderer_factory = renderer_factory
 
     def run(
         self,
@@ -97,15 +132,32 @@ class ExpandJob:
         """Enrich every pending job (up to ``limit``). Never raises per job."""
         jobs = store.pending_enrichment(limit)
         progress.start_step("expand", len(jobs))
-        for job in jobs:
-            self._expand_one(store, job.url)
-            progress.advance("expand", job.company)
+        run_parallel(
+            jobs,
+            lambda job: self._expand_one(
+                self._store_for(store), self._renderer_for(), job.url
+            ),
+            workers=self._workers,
+            on_done=lambda job: progress.advance("expand", job.company),
+        )
         progress.finish_step("expand")
 
-    def _expand_one(self, store: JobStore, url: str) -> None:
+    def _store_for(self, fallback: JobStore) -> JobStore:
+        """Return this worker thread's own store, or the shared one if serial."""
+        if self._store_factory is None:
+            return fallback
+        store = self._store_factory()
+        assert isinstance(store, JobStore)
+        return store
+
+    def _renderer_for(self) -> PageRenderer:
+        """Return this worker's own renderer, or the shared one if serial."""
+        return self._renderer_factory() if self._renderer_factory else self._renderer
+
+    def _expand_one(self, store: JobStore, renderer: PageRenderer, url: str) -> None:
         store.bump_enrich_attempts(url)
         try:
-            html = self._renderer.render(url)
+            html = renderer.render(url)
             description = self._extract(html)
         except Exception as exc:  # noqa: BLE001 - record on the row, continue
             store.set_enrichment_error(url, str(exc))

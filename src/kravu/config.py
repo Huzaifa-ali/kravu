@@ -34,6 +34,11 @@ APPLY_MAX_ATTEMPTS = 3
 # nor KRAVU_LIMIT specifies one.
 DEFAULT_LIMIT = 100
 
+# Default worker count for intra-step parallelism when KRAVU_WORKERS is unset.
+# Modest by design: free-tier LLM providers cap requests per minute, so a small
+# bound respects the rate limit while still overlapping I/O waits.
+DEFAULT_WORKERS = 4
+
 
 def app_home() -> Path:
     """Root directory for all kravu runtime data.
@@ -158,6 +163,23 @@ def limit() -> int:
         return int(raw)
     except ValueError:
         return DEFAULT_LIMIT
+
+
+def workers() -> int:
+    """Number of concurrent workers per parallelized step, from ``KRAVU_WORKERS``.
+
+    Always safe to default (like ``limit``): unset or non-integer falls back to
+    ``DEFAULT_WORKERS``; values below 1 are floored to 1 (serial). A ``--workers``
+    CLI option or a ``workers`` key in ``searches.yaml`` may override per run.
+    """
+    raw = os.environ.get("KRAVU_WORKERS")
+    if not raw:
+        return DEFAULT_WORKERS
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEFAULT_WORKERS
+    return max(1, value)
 
 
 def cover_letter_default() -> str:

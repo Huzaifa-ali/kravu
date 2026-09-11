@@ -58,6 +58,20 @@ def test_explore_step_adapts_signature(repo) -> None:  # type: ignore[no-untyped
     explore_step.use_case.run(repo, None)  # must not raise
 
 
+def test_build_pipeline_steps_defaults_are_serial_safe() -> None:
+    steps = build_pipeline_steps(
+        sources=[_FakeSource()],
+        llm=_FakeLLM(),
+        profile=_profile(),
+        renderer=_FakeRenderer(),
+        min_score=7,
+        cover_policy="never",
+        searches={"searches": []},
+        limit=10,
+    )
+    assert [s.name for s in steps] == ["explore", "expand", "score", "tailor", "cover"]
+
+
 def test_select_driver_defaults_to_kiro() -> None:
     assert select_driver("kiro").name == "kiro"
     assert select_driver("claude_code").name == "claude_code"

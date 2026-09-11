@@ -59,9 +59,11 @@ materials you review and send yourself. Stage 6 is a separate, explicit
 `kravu apply` because it has real-world side effects.
 
 The LLM is used only as a focused text function (score this / rewrite that), one
-job at a time with a small prompt — never a giant blob — so control flow stays
-deterministic and drift-free. The single place that genuinely needs open-ended
-reasoning, filling arbitrary web forms, is isolated in stage 6.
+job per call with a small prompt — never a giant blob — so control flow stays
+deterministic and drift-free. Within a stage, jobs are processed concurrently by
+a bounded worker pool (see `KRAVU_WORKERS` below) to overlap the network and LLM
+waits; the results are identical to a serial run. The single place that genuinely
+needs open-ended reasoning, filling arbitrary web forms, is isolated in stage 6.
 
 ## Quick start
 
@@ -85,8 +87,8 @@ uv run kravu status    # per-step counts + your ranked shortlist
 | Command | What it does |
 |---------|--------------|
 | `kravu init` | One-time setup: read your resume, pick a provider/model, propose searches |
-| `kravu run` | Run the full pipeline over all outstanding work (idempotent, safe to re-run) |
-| `kravu resume <step>` | Retry the failed/pending jobs at a step (`explore`\|`expand`\|`score`\|`tailor`\|`cover`), then continue forward |
+| `kravu run` | Run the full pipeline over all outstanding work (idempotent, safe to re-run). `--workers N` sets per-step concurrency |
+| `kravu resume <step>` | Retry the failed/pending jobs at a step (`explore`\|`expand`\|`score`\|`tailor`\|`cover`), then continue forward (`--workers N` supported) |
 | `kravu status` | Per-step counts (done / pending) plus your ranked shortlist |
 | `kravu clean` | Reset the workspace: clear all jobs, tailored resumes, cover letters, and logs (asks first; keeps your profile, searches, and keys) |
 | `kravu apply` | Run the gated Apply Agent over ready jobs — human-approval by default (`--auto` to opt in, `--daily-cap N`) |
@@ -101,6 +103,10 @@ uv run kravu status    # per-step counts + your ranked shortlist
 - **Searches** — `~/.kravu/searches.yaml` (created by `kravu init`) defines your
   keyword searches, sources, fit threshold, cover-letter policy, and `limit` — the
   number of jobs a run explores and processes.
+- **Workers** — `KRAVU_WORKERS` (default 4) sets how many jobs each step processes
+  concurrently; `--workers N` on `kravu run`/`resume` overrides it, as does a
+  `workers:` key in `searches.yaml`. Keep it modest on free LLM tiers (e.g. Gemini
+  free ~15 requests/min).
 - **Data** — everything lives under `~/.kravu/` (SQLite DB, profile, tailored
   materials). Override the location with `KRAVU_HOME`.
 
@@ -141,9 +147,10 @@ pull request across Python 3.11 and 3.12; contributions should keep it green. Se
 ## Roadmap
 
 - **v0.1** *(current)* — explore → expand → score → tailor → cover, plus the
-  human-gated Apply Agent.
+  human-gated Apply Agent. Each step processes jobs concurrently (bounded worker
+  pool, `KRAVU_WORKERS`).
 - **v0.2** — PDF rendering of materials; richer `status`; broader ATS apply support.
-- **v0.3+** — streaming/concurrent pipeline execution; scheduled runs.
+- **v0.3+** — streaming (cross-stage/overlapping) pipeline execution; scheduled runs.
 
 ## License
 

@@ -47,3 +47,26 @@ def test_finish_step_marks_full_step_complete() -> None:
 def test_finish_step_is_safe_without_start() -> None:
     with Progress(*_progress_columns(), auto_refresh=False) as progress:
         RichProgressReporter(progress).finish_step("never-started")  # no raise
+
+
+def test_advance_is_thread_safe_under_concurrent_calls() -> None:
+    import threading
+
+    from rich.progress import Progress
+
+    with Progress(*_progress_columns(), auto_refresh=False) as progress:
+        reporter = RichProgressReporter(progress)
+        reporter.start_step("score", total=200)
+
+        def hammer() -> None:
+            for _ in range(100):
+                reporter.advance("score", "x")
+
+        threads = [threading.Thread(target=hammer) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        task = _task(progress, "score")
+        assert task.completed == 200

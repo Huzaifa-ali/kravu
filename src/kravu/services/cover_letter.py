@@ -15,6 +15,7 @@ from kravu import config
 from kravu.adapters import prompts
 from kravu.domain.models import Job, Profile
 from kravu.domain.ports import NO_PROGRESS, JobStore, LLMClient, ProgressReporter
+from kravu.services.parallel import StoreFactory, run_parallel
 from kravu.services.tailor_validate import SKILL_WATCHLIST
 
 _MAX_ATTEMPTS = config.COVER_MAX_ATTEMPTS
@@ -51,13 +52,34 @@ class DraftCoverLetter:
     """Draft cover letters per the user's policy, with zero fabrication."""
 
     def __init__(
-        self, llm: LLMClient, profile: Profile, policy: str, min_score: int
+        self,
+        llm: LLMClient,
+        profile: Profile,
+        policy: str,
+        min_score: int,
+        *,
+        workers: int = 1,
+        store_factory: StoreFactory | None = None,
     ) -> None:
-        """Store the model port, profile, cover-letter policy, and threshold."""
+        """Store the model port, profile, cover-letter policy, and threshold.
+
+        Args:
+            llm: The model port used to draft each letter.
+            profile: The candidate profile constraining what a letter may claim.
+            policy: The cover-letter policy (``never``, ``always``, or
+                ``only_if_required``).
+            min_score: The threshold a job must clear to be considered.
+            workers: Degree of concurrency for per-job drafting (``<= 1`` serial).
+            store_factory: Builds a fresh per-thread store when running in
+                parallel; each worker thread must use its own SQLite connection.
+                ``None`` keeps the shared store (serial-safe default).
+        """
         self._llm = llm
         self._profile = profile
         self._policy = policy
         self._min_score = min_score
+        self._workers = workers
+        self._store_factory = store_factory
 
     def run(
         self,
@@ -70,10 +92,21 @@ class DraftCoverLetter:
         config.ensure_dirs()
         jobs = store.pending_cover(self._min_score, limit)
         progress.start_step("cover", len(jobs))
-        for job in jobs:
-            self._process_one(store, job)
-            progress.advance("cover", job.company)
+        run_parallel(
+            jobs,
+            lambda job: self._process_one(self._store_for(store), job),
+            workers=self._workers,
+            on_done=lambda job: progress.advance("cover", job.company),
+        )
         progress.finish_step("cover")
+
+    def _store_for(self, fallback: JobStore) -> JobStore:
+        """Return this worker thread's own store, or the shared one if serial."""
+        if self._store_factory is None:
+            return fallback
+        store = self._store_factory()
+        assert isinstance(store, JobStore)
+        return store
 
     def _process_one(self, store: JobStore, job: Job) -> None:
         if self._policy == "never" or not self._needed(job):
