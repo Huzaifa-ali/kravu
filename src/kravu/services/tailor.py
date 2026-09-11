@@ -19,6 +19,7 @@ from kravu.adapters.llm import parse_json
 from kravu.domain.models import Job, Profile
 from kravu.domain.ports import NO_PROGRESS, JobStore, LLMClient, ProgressReporter
 from kravu.exceptions import LLMResponseError
+from kravu.services.parallel import StoreFactory, run_parallel
 from kravu.services.tailor_validate import validate_no_fabrication
 
 _MAX_ATTEMPTS = config.TAILOR_MAX_ATTEMPTS
@@ -32,11 +33,31 @@ def _slug(company: str, title: str) -> str:
 class TailorResume:
     """Tailor resumes for high-fit jobs, enforcing zero fabrication."""
 
-    def __init__(self, llm: LLMClient, profile: Profile, min_score: int) -> None:
-        """Store the model port, candidate profile, and fit threshold."""
+    def __init__(
+        self,
+        llm: LLMClient,
+        profile: Profile,
+        min_score: int,
+        *,
+        workers: int = 1,
+        store_factory: StoreFactory | None = None,
+    ) -> None:
+        """Store the model port, candidate profile, and fit threshold.
+
+        Args:
+            llm: The model port used to tailor and judge each resume.
+            profile: The candidate profile whose resume facts constrain tailoring.
+            min_score: The threshold a job must clear to be tailored.
+            workers: Degree of concurrency for per-job tailoring (``<= 1`` serial).
+            store_factory: Builds a fresh per-thread store when running in
+                parallel; each worker thread must use its own SQLite connection.
+                ``None`` keeps the shared store (serial-safe default).
+        """
         self._llm = llm
         self._profile = profile
         self._min_score = min_score
+        self._workers = workers
+        self._store_factory = store_factory
 
     def run(
         self,
@@ -49,10 +70,21 @@ class TailorResume:
         config.ensure_dirs()
         jobs = store.pending_tailoring(self._min_score, limit)
         progress.start_step("tailor", len(jobs))
-        for job in jobs:
-            self._tailor_one(store, job)
-            progress.advance("tailor", job.company)
+        run_parallel(
+            jobs,
+            lambda job: self._tailor_one(self._store_for(store), job),
+            workers=self._workers,
+            on_done=lambda job: progress.advance("tailor", job.company),
+        )
         progress.finish_step("tailor")
+
+    def _store_for(self, fallback: JobStore) -> JobStore:
+        """Return this worker thread's own store, or the shared one if serial."""
+        if self._store_factory is None:
+            return fallback
+        store = self._store_factory()
+        assert isinstance(store, JobStore)
+        return store
 
     def _tailor_one(self, store: JobStore, job: Job) -> None:
         prompt = prompts.tailor_prompt(

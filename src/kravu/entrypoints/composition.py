@@ -103,7 +103,16 @@ def build_pipeline_steps(
                 store_factory=store_factory,
             ),
         ),
-        PipelineStep("tailor", TailorResume(llm, profile, min_score)),
+        PipelineStep(
+            "tailor",
+            TailorResume(
+                llm,
+                profile,
+                min_score,
+                workers=workers,
+                store_factory=store_factory,
+            ),
+        ),
         PipelineStep(
             "cover",
             DraftCoverLetter(
