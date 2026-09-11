@@ -245,6 +245,18 @@ class JobRepository:
         row = self._conn.execute("SELECT * FROM jobs WHERE url = ?", (url,)).fetchone()
         return _row_to_job(row) if row else None
 
+    def clear_all(self) -> int:
+        """Delete every job row and reclaim space. Returns the number removed.
+
+        Backs ``kravu clean``: a full reset of the blackboard so the pipeline can
+        be re-run from scratch. Idempotent — clearing an empty table returns 0.
+        """
+        count = int(self._conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0])
+        self._conn.execute("DELETE FROM jobs")
+        self._conn.commit()
+        self._conn.execute("VACUUM")
+        return count
+
     def stats(self) -> dict[str, int]:
         """Return counts of jobs at each pipeline phase."""
         c = self._conn

@@ -82,6 +82,10 @@ class JobStore(Protocol):
         """Fetch a single job by URL, or None if not found."""
         ...
 
+    def clear_all(self) -> int:
+        """Delete every job row; return the number removed."""
+        ...
+
     def stats(self) -> dict[str, int]:
         """Return counts of jobs at each pipeline phase."""
         ...
@@ -137,3 +141,49 @@ class DiscoverySource(Protocol):
     def discover(self, searches: dict[str, object]) -> list[Job]:
         """Run the configured searches and return discovered jobs."""
         ...
+
+
+@runtime_checkable
+class ProgressReporter(Protocol):
+    """Optional sink for per-step / per-job progress during a pipeline run.
+
+    A pure domain contract so use cases can report progress without importing a
+    rendering library: services depend on this protocol, and the entrypoint layer
+    provides the concrete (Rich) implementation. A step calls ``start_step`` once
+    with the number of items it will process, ``advance`` once per processed item,
+    and ``finish_step`` when done.
+    """
+
+    def start_step(self, name: str, total: int) -> None:
+        """Announce a step and how many items it will process."""
+        ...
+
+    def advance(self, name: str, detail: str = "") -> None:
+        """Mark one item of ``name`` processed; ``detail`` is a short label."""
+        ...
+
+    def finish_step(self, name: str, note: str = "") -> None:
+        """Mark a step complete; ``note`` is an optional summary label."""
+        ...
+
+
+class NullProgressReporter:
+    """No-op ``ProgressReporter``: the default when no progress UI is wired.
+
+    Lets services and tests call the progress API unconditionally without a
+    rendering dependency and with zero output.
+    """
+
+    def start_step(self, name: str, total: int) -> None:
+        """Do nothing."""
+
+    def advance(self, name: str, detail: str = "") -> None:
+        """Do nothing."""
+
+    def finish_step(self, name: str, note: str = "") -> None:
+        """Do nothing."""
+
+
+# Shared stateless no-op instance, used as the default reporter across the
+# services so no function-call default is needed (Ruff B008).
+NO_PROGRESS: ProgressReporter = NullProgressReporter()
